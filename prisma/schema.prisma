@@ -1,0 +1,583 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String         @id @default(cuid())
+  email           String         @unique
+  passwordHash    String
+  name            String
+  role            String         @default("VIEWER") // ADMINISTRATOR, ANALYST, FIELD_OFFICER, VIEWER
+  organizationId  String?
+  avatarUrl       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  organization    Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  memberships     Membership[]
+  imports         DatasetImport[]
+  verifications   FieldVerification[]
+  assignedInterventions Intervention[] @relation("AssignedOfficer")
+  scenarios       PlanningScenario[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+  reportedComplaints Complaint[] @relation("ReporterUser")
+  assignedComplaints Complaint[] @relation("AssignedOfficerUser")
+}
+
+model Organization {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  description String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  users       User[]
+  workspaces  Workspace[]
+  memberships Membership[]
+}
+
+model Workspace {
+  id             String       @id @default(cuid())
+  name           String
+  organizationId String
+  selectedState  String?      @default("Tamil Nadu")
+  selectedDistrict String?    @default("Ramanathapuram")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  userId         String
+  organizationId String
+  role           String       @default("VIEWER")
+  createdAt      DateTime     @default(now())
+
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+}
+
+model AdministrativeRegion {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  name       String
+  country    String   @default("India")
+  level      String   // State, District, Block/Taluk, Gram Panchayat
+  parentId   String?
+  boundsJson String?  // GeoJSON bounding box or polygon
+  createdAt  DateTime @default(now())
+
+  parent     AdministrativeRegion?  @relation("RegionHierarchy", fields: [parentId], references: [id])
+  children   AdministrativeRegion[] @relation("RegionHierarchy")
+}
+
+model GeographicBoundary {
+  id          String   @id @default(cuid())
+  communityId String?  @unique
+  geojson     String   // GeoJSON Feature or Polygon
+  areaSqKm    Float?
+  createdAt   DateTime @default(now())
+
+  community   Community? @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model Community {
+  id                        String   @id @default(cuid())
+  name                      String   // Village / Habitation / Town Name
+  code                      String   @unique // LGD (Local Government Directory) or Census Town/Village Code
+  block                     String?  // Block / Taluk / Tehsil
+  district                  String   // District
+  state                     String   @default("Tamil Nadu") // State
+  country                   String   @default("India")
+  latitude                  Float
+  longitude                 Float
+
+  // 1. Population Data (Census of India 2011)
+  population                Int      // Census 2011 Population
+  populationYear            Int      @default(2011)
+  populationDensity         Float?   // Persons per sq. km (Census 2011)
+
+  // 2. Water Access (JJM / WQMIS / Census 2011 Household Drinking Water)
+  waterAccessPct            Float    @default(0) // % households with tap connection (JJM) or treated tap water
+  waterSourceType           String?  @default("Treated Tap Water / Borewell OHT")
+  waterServiceLevel         String?  @default("Basic Piped Connection")
+  waterDataConfidence       String?  @default("Official / JJM WQMIS")
+  waterReferenceYear        Int      @default(2024)
+
+  // 3. Sanitation Coverage (Swachh Bharat Mission - Grameen)
+  sanitationAccessPct       Float    @default(0) // % IHHL (Individual Household Latrine) coverage
+  sanitationServiceType     String?  @default("Individual Household Latrine (IHHL) / Septic")
+  sanitationReferenceYear   Int      @default(2024)
+
+  // 4. Socioeconomic Vulnerability (NFHS-5 / NITI Aayog Multidimensional Poverty Index)
+  povertyRate               Float    @default(0) // % Multidimensional Deprivation Index (NFHS-5 / MPI)
+  householdIncomeMedian     Float?
+  socioeconomicIndex        Float?   @default(45) // 0-100 Deprivation Index
+  socioeconomicSurveyPeriod String?  @default("NFHS-5 (2019-2021)")
+
+  // 5. Rainfall & Flooding (IMD & Central Water Commission)
+  rainfallAnnualMm          Float    @default(850) // IMD Annual Rainfall (mm)
+  floodHazardLevel          String   @default("Low") // CWC / SDMA Inundation Hazard: Low, Moderate, High, Severe
+  historicalFloodEvents     Int      @default(0)
+  climateReferencePeriod    String?  @default("IMD Climatology / CWC Hydrological Atlas")
+
+  // 6. Infrastructure Assets (TWAD / State Water Supply & Drainage Board / Jal Shakti)
+  infrastructureScore       Float    @default(50) // 0-100 physical resilience rating
+  waterPointsCount          Int      @default(0) // Public Standposts, Borewells, OHTs
+  functioningWaterPointsCount Int    @default(0)
+  sanitationFacilitiesCount Int      @default(0) // Community Sanitary Complexes (CSC)
+  infrastructureStatus      String?  @default("Reported by TWAD / Gram Panchayat")
+
+  // Vulnerability computation output (Explainable Modelled Signal)
+  compositeVulnerabilityScore Float   @default(0) // 0-100 (100 = highest vulnerability signal)
+  vulnerabilityCategory      String   @default("UNKNOWN") // VERY_LOW, LOW, MODERATE, HIGH, VERY_HIGH, UNKNOWN
+  dataCompletenessPct        Float    @default(100)
+
+  // Metadata & Status
+  sourceStatus              String   @default("Demo") // Official, Imported, Reported, Modelled, Demo
+  isSampleData              Boolean  @default(true)   // Clearly labeled illustrative demo data
+  dataLimitationsNotice     String?  @default("Illustrative demo baseline — not official or live telemetry")
+  status                    String   @default("ACTIVE")
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  boundary                  GeographicBoundary?
+  datasetRecords            DatasetRecord[]
+  indicatorObservations     IndicatorObservation[]
+  assessments               VulnerabilityAssessment[]
+  climateObservations       ClimateObservation[]
+  hazardEvents              HazardEvent[]
+  infrastructureAssets      InfrastructureAsset[]
+  fieldVerifications        FieldVerification[]
+  interventions             Intervention[]
+  scenarioAllocations       ScenarioAllocation[]
+  alerts                    Alert[]
+  interventionRecommendations InterventionRecommendation[]
+  complaints                Complaint[]
+}
+
+model DataSource {
+  id                    String   @id @default(cuid())
+  sourceAgency          String   // e.g. Ministry of Jal Shakti, Census of India, IMD, SBM-G
+  officialUrl           String   // Official URL
+  datasetTitle          String   // e.g. Jal Jeevan Mission Har Ghar Jal Dashboard
+  indicatorName         String   // e.g. Functional Household Tap Connection (FHTC)
+  indicatorDefinition   String   // Definition of the metric
+  geographicLevel       String   // National, State, District, Block, Gram Panchayat
+  referencePeriod       String   // e.g. 2011, 2019-2021, 2024-2025
+  units                 String   // e.g. %, mm, persons, count
+  sourceStatus          String   @default("Official") // Official, Imported, Reported, Modelled, Demo
+  confidenceNote        String?  // Limitations, methodology notes
+  category              String   // POPULATION, WATER_ACCESS, SANITATION, CLIMATE_FLOOD, SOCIOECONOMIC, INFRASTRUCTURE
+  lastUpdated           DateTime? @default(now())
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  imports               DatasetImport[]
+  datasetRecords        DatasetRecord[]
+  indicatorObservations IndicatorObservation[]
+}
+
+model DatasetImport {
+  id               String   @id @default(cuid())
+  sourceId         String?
+  fileName         String
+  fileFormat       String   // CSV, GEOJSON
+  category         String
+  totalRecords     Int      @default(0)
+  validRecords     Int      @default(0)
+  invalidRecords   Int      @default(0)
+  status           String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  errorLog         String?
+  importedByUserId String?
+  createdAt        DateTime @default(now())
+
+  source           DataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  importedBy       User?       @relation(fields: [importedByUserId], references: [id], onDelete: SetNull)
+  records          DatasetRecord[]
+}
+
+model DatasetRecord {
+  id              String   @id @default(cuid())
+  importId        String
+  communityId     String?
+  sourceId        String?
+  indicatorKey    String
+  rawValue        String
+  normalizedValue Float?
+  dataYear        Int?
+  provenanceJson  String?  // Source, original id, unit, transformation
+  createdAt       DateTime @default(now())
+
+  import          DatasetImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  community       Community?    @relation(fields: [communityId], references: [id], onDelete: SetNull)
+  source          DataSource?   @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+}
+
+model Indicator {
+  id                  String   @id @default(cuid())
+  code                String   @unique
+  name                String
+  category            String
+  unit                String
+  description         String?
+  normalizationMethod String   @default("INVERTED_ACCESS") // INVERTED_ACCESS, DIRECT_RISK, MIN_MAX, CATEGORICAL
+  createdAt           DateTime @default(now())
+}
+
+model IndicatorObservation {
+  id             String    @id @default(cuid())
+  communityId    String
+  indicatorCode  String
+  numericValue   Float?
+  stringValue    String?
+  collectionDate DateTime?
+  sourceId       String?
+  confidence     String?   @default("High")
+  createdAt      DateTime  @default(now())
+
+  community      Community  @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  source         DataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+}
+
+model VulnerabilityConfiguration {
+  id                        String   @id @default(cuid())
+  version                   Int      @unique @default(1)
+  name                      String   @default("India National WASH Vulnerability Policy v1")
+  isActive                  Boolean  @default(true)
+  waterWeight               Float    @default(0.25) // Water access gap
+  sanitationWeight          Float    @default(0.20) // Sanitation access gap
+  climateWeight             Float    @default(0.20) // Rainfall / flood exposure
+  socioeconomicWeight       Float    @default(0.15) // Socioeconomic vulnerability (NFHS / MPI)
+  infrastructureWeight      Float    @default(0.10) // Infrastructure gap
+  populationWeight          Float    @default(0.10) // Population vulnerability / density
+  minCompletenessThreshold  Float    @default(50.0) // 50%
+  createdByUserId           String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  assessments               VulnerabilityAssessment[]
+}
+
+model VulnerabilityAssessment {
+  id                  String   @id @default(cuid())
+  communityId         String
+  configId            String
+  configVersion       Int
+  compositeScore      Float    // 0-100
+  category            String   // VERY_LOW, LOW, MODERATE, HIGH, VERY_HIGH, UNKNOWN
+  waterScore          Float
+  sanitationScore     Float
+  socioeconomicScore  Float
+  climateScore        Float
+  infrastructureScore Float
+  populationScore     Float    @default(50)
+  completenessPct     Float
+  missingFactorsJson  String?  // Array of missing factor keys
+  notes               String?
+  createdAt           DateTime @default(now())
+
+  community           Community                  @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  config              VulnerabilityConfiguration @relation(fields: [configId], references: [id], onDelete: Cascade)
+  contributions       VulnerabilityContribution[]
+}
+
+model VulnerabilityContribution {
+  id                   String   @id @default(cuid())
+  assessmentId         String
+  factorName           String
+  rawValue             Float
+  normalizedScore      Float
+  weight               Float
+  weightedContribution Float
+
+  assessment           VulnerabilityAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+}
+
+model ClimateObservation {
+  id                String   @id @default(cuid())
+  communityId       String
+  observationDate   DateTime
+  rainfallMm        Float
+  temperatureC      Float?
+  droughtIndex      Float?
+  soilSaturationPct Float?
+  floodRiskIndex    Float?
+  dataSourceId      String?
+  createdAt         DateTime @default(now())
+
+  community         Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model HazardEvent {
+  id                      String   @id @default(cuid())
+  communityId             String
+  eventType               String   // FLASH_FLOOD, RIVERINE_FLOOD, WATER_CONTAMINATION, CYCLONE_INUNDATION
+  severity                String   // MODERATE, SEVERE, CATASTROPHIC
+  dateOccurred            DateTime
+  affectedPopulation      Int
+  infrastructureDamageCost Float?
+  dataSource              String?
+  details                 String?
+  createdAt               DateTime @default(now())
+
+  community               Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model InfrastructureAsset {
+  id           String    @id @default(cuid())
+  communityId  String
+  name         String
+  assetType    String    // OVERHEAD_TANK, BOREWELL_PUMP, PIPED_SCHEME, RO_PLANT, COMMUNITY_TOILET, DRAINAGE_CHANNEL
+  status       String    @default("FUNCTIONAL") // FUNCTIONAL, PARTIALLY_FUNCTIONAL, NON_FUNCTIONAL, UNDER_REPAIR
+  condition    String?   @default("Good") // Good, Fair, Poor, Critical
+  latitude     Float?
+  longitude    Float?
+  verifiedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  community    Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model FieldVerification {
+  id                       String    @id @default(cuid())
+  communityId              String
+  officerId                String?
+  officerName              String
+  verificationDate         DateTime  @default(now())
+  waterObservedPct         Float?
+  sanitationObservedPct    Float?
+  infrastructureCondition  String?
+  notes                    String?
+  photoUrlsJson            String?   // JSON array of photo URLs
+  gpsLatitude              Float?
+  gpsLongitude             Float?
+  status                   String    @default("VERIFIED") // DRAFT, PENDING_REVIEW, VERIFIED, REJECTED
+  syncedAt                 DateTime  @default(now())
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  community                Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  officer                  User?     @relation(fields: [officerId], references: [id], onDelete: SetNull)
+  complaintId              String?
+  complaint                Complaint? @relation(fields: [complaintId], references: [id], onDelete: SetNull)
+}
+
+model Intervention {
+  id                 String   @id @default(cuid())
+  communityId        String
+  title              String
+  issueCategory      String   // JAL_JEEVAN_MISSION_FHTC, SBM_COMMUNITY_TOILET, FLOOD_RESILIENT_WELLHEAD, RO_PURIFICATION_PLANT, TWAD_PIPELINE_REPAIR, CAPACITY_BUILDING
+  recommendedAction  String
+  priority           String   @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  status             String   @default("IDENTIFIED") // IDENTIFIED, AWAITING_VERIFICATION, PLANNED, APPROVED, IN_PROGRESS, COMPLETED, VERIFIED, CLOSED
+  proposedStartDate  DateTime?
+  proposedEndDate    DateTime?
+  assignedOrg        String?  @default("TWAD Board & District Administration")
+  assignedOfficerId  String?
+  estimatedBudget    Float    @default(0) // In INR (₹)
+  fundingSource      String?  @default("JJM State Water Fund / SBM-G")
+  comments           String?
+  supportingFiles    String?  // JSON array
+  auditLogJson       String?  // JSON array of events [{ action, user, timestamp }]
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  community          Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  assignedOfficer    User?     @relation("AssignedOfficer", fields: [assignedOfficerId], references: [id], onDelete: SetNull)
+}
+
+model InterventionType {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  description     String
+  targetIndicator String   // water_access, sanitation_access, flood_exposure, infrastructure, socioeconomic, population
+  defaultCost     Float    // in INR (₹)
+  defaultImpact   String   // Scenario estimate description
+  assumptions     String
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  recommendations InterventionRecommendation[]
+}
+
+model InterventionRecommendation {
+  id                 String   @id @default(cuid())
+  communityId        String
+  interventionTypeId String?
+  title              String
+  reason             String
+  targetIndicator    String
+  currentValue       Float?
+  threshold          Float?
+  priority           String   @default("HIGH") // LOW, MEDIUM, HIGH, CRITICAL
+  estimatedCost      Float    @default(0)      // In INR (₹)
+  estimatedImpact    String
+  assumptions        String
+  confidence         String   @default("Medium") // High, Medium, Low
+  status             String   @default("RECOMMENDED") // RECOMMENDED, ADDED_TO_SCENARIO, CONVERTED_TO_ACTION, DISMISSED
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  community          Community         @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  interventionType   InterventionType? @relation(fields: [interventionTypeId], references: [id], onDelete: SetNull)
+}
+
+model PlanningScenario {
+  id               String   @id @default(cuid())
+  name             String
+  description      String?
+  totalBudget      Float    @default(50000000) // Default ₹5 Crores (5,00,00,000)
+  allocatedBudget  Float    @default(0)
+  remainingBudget  Float    @default(50000000)
+  populationTarget Int      @default(0)
+  estimatedReach   Int      @default(0)
+  assumptionsJson  String?  // JSON configuration of unit costs & parameters
+  createdByUserId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdByUser    User?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  allocations      ScenarioAllocation[]
+}
+
+model ScenarioAllocation {
+  id                     String   @id @default(cuid())
+  scenarioId             String
+  communityId            String
+  interventionType       String
+  unitCost               Float
+  targetUnits            Int
+  allocatedAmount        Float
+  estimatedPopulationServed Int
+
+  scenario               PlanningScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  community              Community        @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model Alert {
+  id                  String    @id @default(cuid())
+  alertType           String    // THRESHOLD_EXCEEDED, FLOOD_HAZARD_OVERLAP, DATASET_OUTDATED, IMPORT_FAILURE, FIELD_VERIFICATION_REQUIRED, INTERVENTION_OVERDUE
+  severity            String    @default("WARNING") // INFO, WARNING, HIGH, CRITICAL
+  title               String
+  message             String
+  communityId         String?
+  source              String?   @default("System Automated Engine")
+  status              String    @default("ACTIVE") // ACTIVE, ACKNOWLEDGED, RESOLVED
+  acknowledgedByUserId String?
+  acknowledgedAt      DateTime?
+  resolvedAt          DateTime?
+  createdAt           DateTime  @default(now())
+
+  community           Community? @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  userName    String?  @default("System")
+  action      String   // CREATE, UPDATE, DELETE, IMPORT, ASSESS, SIMULATE, EXPORT
+  entityType  String   // Community, Intervention, Assessment, DatasetImport, Scenario, FieldVerification
+  entityId    String?
+  detailsJson String?  // Details/diff
+  ipAddress   String?  @default("127.0.0.1")
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model Complaint {
+  id                  String    @id @default(cuid())
+  complaintNumber     String    @unique // e.g. CMP-2026-0001
+  trackingId          String?   @unique // e.g. AQL-2026-TN-RAM-000124
+  title               String
+  description         String
+  category            String    // WATER_SUPPLY, WATER_QUALITY, SANITATION, DRAINAGE, FLOODING, INFRASTRUCTURE, WASTE_MANAGEMENT, OTHER
+  status              String    @default("REPORTED") // REPORTED, ROUTED, UNDER_REVIEW, ASSIGNED, IN_PROGRESS, FIELD_VERIFIED, ACTION_TAKEN, RESOLVED, CLOSED
+  priority            String    @default("MEDIUM")   // LOW, MEDIUM, HIGH, CRITICAL
+  priorityReason      String?   // Transparent, explainable priority rationale
+  language            String?   @default("en")       // Selected Indian language (en, ta, hi, te, etc.)
+  locationName        String    // Specific neighborhood or address
+  latitude            Float?
+  longitude           Float?
+  locationAccuracy    Float?    // GPS accuracy in meters
+  locationCapturedAt  DateTime? // Explicit timestamp of GPS fix
+  evidenceCapturedAt  DateTime? // Explicit timestamp of live photo
+  routedDepartment    String?   // Automatically mapped authority / department
+  jurisdiction        String?   // Administrative jurisdiction (e.g. Gram Panchayat, Taluk, District)
+  routingStatus       String?   @default("ROUTED")   // ROUTED, ROUTING_PENDING, FORWARDED
+  clientIp            String?   // Supplementary network audit signal (never used as location)
+  communityId         String?
+  reporterId          String?
+  reporterName        String?   @default("Citizen")
+  reporterContact     String?   // Mobile or email
+  isAnonymous         Boolean   @default(false)
+  assignedOfficerId   String?
+  assignedOfficerName String?
+  verificationStatus  String    @default("UNVERIFIED") // UNVERIFIED, PENDING_VERIFICATION, VERIFIED, REJECTED
+  resolutionNotes     String?
+  resolvedAt          DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  community           Community?               @relation(fields: [communityId], references: [id], onDelete: SetNull)
+  reporterUser        User?                    @relation("ReporterUser", fields: [reporterId], references: [id], onDelete: SetNull)
+  assignedOfficerUser User?                    @relation("AssignedOfficerUser", fields: [assignedOfficerId], references: [id], onDelete: SetNull)
+  evidence            ComplaintEvidence[]
+  statusHistory       ComplaintStatusHistory[]
+  verifications       FieldVerification[]
+}
+
+model ComplaintEvidence {
+  id               String    @id @default(cuid())
+  complaintId      String
+  fileUrl          String    // Base64 data URL or storage URL of live camera photo
+  caption          String?
+  fileType         String?   @default("image") // image, document, audio
+  captureType      String?   @default("LIVE_CAMERA") // LIVE_CAMERA, ATTACHMENT, NO_EVIDENCE
+  latitude         Float?
+  longitude        Float?
+  locationAccuracy Float?
+  uploadedAt       DateTime  @default(now())
+
+  complaint        Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+}
+
+model ComplaintStatusHistory {
+  id            String    @id @default(cuid())
+  complaintId   String
+  oldStatus     String
+  newStatus     String
+  changedById   String?
+  changedByName String?   @default("System Officer")
+  notes         String?
+  createdAt     DateTime  @default(now())
+
+  complaint     Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+}
+

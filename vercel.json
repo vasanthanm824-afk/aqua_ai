@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "framework": "nextjs",
+  "installCommand": "npm install",
+  "buildCommand": "prisma generate && next build",
+  "env": {
+    "PRISMA_GENERATE_SKIP_AUTOINSTALL": "true"
+  },
+  "functions": {
+    "src/app/api/**/*.ts": {
+      "maxDuration": 30
+    }
+  }
+}
