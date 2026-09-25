@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { ensureDatabaseSeeded } from "@/lib/db-auto-seed";
+import { BASELINE_SETTLEMENTS } from "@/lib/fallback-data";
 import {
   findNearestCommunity,
   evaluateComplaintPriority,
