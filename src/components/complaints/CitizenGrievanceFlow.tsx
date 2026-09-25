@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
@@ -983,8 +983,9 @@ export function CitizenGrievanceFlow({
                       value={locationName}
                       onChange={(e) => setLocationName(e.target.value)}
                       placeholder="e.g. Near East Jetty Standpost / Beach Road Culvert"
-                      className="w-full rounded-xl border border-slate-200 bg-[#07101f] px-3.5 py-2 text-xs text-slate-900"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                     />
+
                   </div>
 
                   <p className="text-[10px] text-slate-500 italic">
@@ -1146,7 +1147,7 @@ export function CitizenGrievanceFlow({
                   type="checkbox"
                   checked={isAnonymous}
                   onChange={(e) => setIsAnonymous(e.target.checked)}
-                  className="rounded border-slate-200 bg-[#07101f] text-cyan-500 focus:ring-cyan-500 h-4 w-4"
+                  className="rounded border-slate-300 bg-white text-cyan-600 focus:ring-cyan-500 h-4 w-4"
                 />
                 <div>
                   <span className="text-xs font-bold text-slate-900 block">
@@ -1165,7 +1166,7 @@ export function CitizenGrievanceFlow({
                       value={reporterName}
                       onChange={(e) => setReporterName(e.target.value)}
                       placeholder="Citizen Name"
-                      className="w-full rounded-lg border border-slate-200 bg-[#07101f] px-3 py-1.5 text-xs text-slate-900"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                     />
                   </div>
                   <div>
@@ -1177,12 +1178,13 @@ export function CitizenGrievanceFlow({
                       value={reporterContact}
                       onChange={(e) => setReporterContact(e.target.value)}
                       placeholder="+91 98765 43210"
-                      className="w-full rounded-lg border border-slate-200 bg-[#07101f] px-3 py-1.5 text-xs text-slate-900"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                     />
                   </div>
                 </div>
               )}
             </div>
+
 
             {/* Navigation Buttons */}
             <div className="pt-4 border-t border-slate-200 flex items-center justify-between">

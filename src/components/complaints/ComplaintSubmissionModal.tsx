@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect } from "react";
 import {
@@ -448,7 +448,7 @@ export function ComplaintSubmissionModal({
                       value={reporterName}
                       onChange={(e) => setReporterName(e.target.value)}
                       placeholder="e.g. S. Ramanathan"
-                      className="w-full rounded-lg bg-[#070f22] border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-cyan-400"
+                      className="w-full rounded-lg bg-white border border-slate-300 px-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                     />
                   </div>
                   <div>
@@ -458,11 +458,12 @@ export function ComplaintSubmissionModal({
                       value={reporterContact}
                       onChange={(e) => setReporterContact(e.target.value)}
                       placeholder="e.g. +91 98400 12345"
-                      className="w-full rounded-lg bg-[#070f22] border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-cyan-400"
+                      className="w-full rounded-lg bg-white border border-slate-300 px-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                     />
                   </div>
                 </div>
               ) : (
+
                 <p className="text-[11px] text-slate-500 italic">
                   Your identity and contact details will not be stored or visible to administrators.
                 </p>
