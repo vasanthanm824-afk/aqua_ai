@@ -28,9 +28,32 @@ import {
 } from "recharts";
 import { VulnerabilityBadge } from "@/components/shared/VulnerabilityBadge";
 
+import { useRouter } from "next/navigation";
+import { isAdminRole } from "@/lib/permissions";
+
 export default function CommandCenterPage() {
+  const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function checkAuthAndLoad() {
+      try {
+        const meRes = await fetch("/api/auth/me");
+        if (meRes.ok) {
+          const userJson = await meRes.json();
+          if (userJson.authenticated && userJson.user) {
+            if (!isAdminRole(userJson.user.role)) {
+              router.replace("/user");
+              return;
+            }
+          }
+        }
+      } catch (err) {}
+      fetchAnalytics();
+    }
+    checkAuthAndLoad();
+  }, [router]);
 
   const fetchAnalytics = async () => {
     setLoading(true);
@@ -47,7 +70,6 @@ export default function CommandCenterPage() {
     }
   };
 
-  useEffect(() => { fetchAnalytics(); }, []);
 
   const summary = data?.summary || {
     analyzedCommunitiesCount: 12,

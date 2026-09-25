@@ -72,12 +72,23 @@ export async function seedDatabase(customPrisma?: PrismaClient) {
     const passwordHashAnalyst = await bcrypt.hash("Analyst2026!", 10);
     const passwordHashOfficer = await bcrypt.hash("FieldOfficer2026!", 10);
     const passwordHashViewer = await bcrypt.hash("Viewer2026!", 10);
+    const passwordHashCitizen = await bcrypt.hash("Citizen2026!", 10);
 
     const adminUser = await prisma.user.create({
       data: {
         email: "admin@aqualens.gov.in",
         passwordHash: passwordHashAdmin,
         name: "Dr. K. Senthil Kumar, IAS",
+        role: "ADMINISTRATOR",
+        organizationId: org.id,
+      },
+    });
+
+    await prisma.user.create({
+      data: {
+        email: "admin@aqualens.org",
+        passwordHash: passwordHashAdmin,
+        name: "Aqua-Lens Admin",
         role: "ADMINISTRATOR",
         organizationId: org.id,
       },
@@ -112,6 +123,17 @@ export async function seedDatabase(customPrisma?: PrismaClient) {
         organizationId: org.id,
       },
     });
+
+    await prisma.user.create({
+      data: {
+        email: "citizen@aqualens.org",
+        passwordHash: passwordHashCitizen,
+        name: "Ramasamy (Citizen)",
+        role: "VIEWER",
+        organizationId: org.id,
+      },
+    });
+
 
     // 4. Standard 6-Factor Vulnerability Configuration for India
     const scoringConfig = await prisma.vulnerabilityConfiguration.create({

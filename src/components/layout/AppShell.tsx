@@ -24,9 +24,12 @@ import {
   Layers,
   Bot,
   MessageSquareWarning,
+  LogOut,
+  Home,
 } from "lucide-react";
 import { Logo } from "../shared/Logo";
 import { AskAquaLensModal } from "@/components/ask/AskAquaLensModal";
+import { isAdminRole } from "@/lib/permissions";
 
 interface NavItem {
   name: string;
@@ -35,7 +38,7 @@ interface NavItem {
   badge?: string;
 }
 
-const NAV_ITEMS: NavItem[] = [
+const ADMIN_NAV_ITEMS: NavItem[] = [
   { name: "Command Center",          href: "/",                 icon: LayoutDashboard },
   { name: "Ask Aqua-Lens",           href: "/ask",              icon: Sparkles,              badge: "AI Intel" },
   { name: "India Vulnerability Map", href: "/map",              icon: MapIcon },
@@ -51,6 +54,12 @@ const NAV_ITEMS: NavItem[] = [
   { name: "Alerts & Monitoring",     href: "/alerts",           icon: Bell },
   { name: "Administration",          href: "/admin",            icon: Layers },
   { name: "Settings & Policies",     href: "/settings",         icon: Sliders },
+];
+
+const USER_NAV_ITEMS: NavItem[] = [
+  { name: "Citizen Portal",          href: "/user font-bold",   icon: Home },
+  { name: "Ask Aqua-Lens",           href: "/ask",              icon: Sparkles,              badge: "AI Help" },
+  { name: "Complaint Center",        href: "/complaints",       icon: MessageSquareWarning,  badge: "Citizen" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -69,6 +78,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [selectedDistrict, setSelectedDistrict] = useState("Ramanathapuram");
   const [isAskModalOpen,   setIsAskModalOpen]   = useState(false);
   const [askContext,       setAskContext]        = useState<{ id?: string; name?: string } | null>(null);
+
+  const isAdmin = isAdminRole(currentUser?.role);
+  const navItems = isAdmin
+    ? ADMIN_NAV_ITEMS
+    : [
+        { name: "Citizen Portal", href: "/user", icon: Home },
+        { name: "Ask Aqua-Lens", href: "/ask", icon: Sparkles, badge: "AI Help" },
+        { name: "Complaint Center", href: "/complaints", icon: MessageSquareWarning, badge: "Citizen" },
+      ];
 
   useEffect(() => {
     const handler = (e: any) => { setAskContext(e.detail || null); setIsAskModalOpen(true); };
@@ -89,14 +107,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }
         if (userRes.ok) {
           const d = await userRes.json();
-          if (d.authenticated && d.user) setCurrentUser(d.user);
+          if (d.authenticated && d.user) {
+            setCurrentUser(d.user);
+            // Direct URL Guard for non-admin users
+            if (!isAdminRole(d.user.role)) {
+              const allowedPaths = ["/user", "/ask", "/complaints"];
+              const isAllowed = allowedPaths.some(p => pathname === p || pathname.startsWith("/complaints/"));
+              if (!isAllowed) {
+                router.replace("/user");
+              }
+            }
+          }
         }
       } catch (err) {
         console.error("Shell data fetch error:", err);
       }
     }
     loadData();
-  }, []);
+  }, [pathname, router]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      router.push("/login");
+      router.refresh();
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
+  };
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,7 +187,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* Nav items */}
         <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const Icon    = item.icon;
             const isActive = pathname === item.href;
             return (
@@ -200,36 +238,52 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        {/* Sidebar footer — user info */}
+        {/* Sidebar footer — user info & logout */}
         <div className="shrink-0 p-3" style={{ borderTop: "1px solid var(--border-light)" }}>
           {!collapsed ? (
-            <div className="rounded-lg p-2.5" style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-light)" }}>
-              <div className="flex items-center gap-2.5">
-                <div
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-                  style={{ background: "var(--blue-primary)" }}
+            <div className="rounded-lg p-2.5 space-y-2" style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-light)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <div
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+                    style={{ background: isAdmin ? "var(--blue-primary)" : "#10b981" }}
+                  >
+                    {currentUser?.name?.charAt(0) || "U"}
+                  </div>
+                  <div className="overflow-hidden">
+                    <p className="truncate text-[11px] font-semibold" style={{ color: "var(--text-heading)" }}>
+                      {currentUser?.name || "Aqua-Lens User"}
+                    </p>
+                    <p className="truncate text-[9px] font-mono" style={{ color: "var(--text-muted)" }}>
+                      {isAdmin ? "PORTAL: ADMIN" : "PORTAL: CITIZEN"}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="p-1 rounded text-red-500 hover:bg-red-50 transition-colors"
+                  title="Logout session"
                 >
-                  {currentUser?.name?.charAt(0) || "A"}
-                </div>
-                <div className="overflow-hidden">
-                  <p className="truncate text-[11px] font-semibold" style={{ color: "var(--text-heading)" }}>
-                    {currentUser?.name || "Aqua-Lens User"}
-                  </p>
-                  <p className="truncate text-[10px]" style={{ color: "var(--text-muted)" }}>
-                    {currentUser?.email || "intelligence@aqualens.gov.in"}
-                  </p>
-                </div>
+                  <LogOut className="h-4 w-4" />
+                </button>
               </div>
             </div>
           ) : (
-            <div className="flex justify-center">
+            <div className="flex flex-col items-center gap-2">
               <div
                 className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white"
-                style={{ background: "var(--blue-primary)" }}
-                title="Aqua-Lens"
+                style={{ background: isAdmin ? "var(--blue-primary)" : "#10b981" }}
+                title={currentUser?.name || "User"}
               >
-                {currentUser?.name?.charAt(0) || "A"}
+                {currentUser?.name?.charAt(0) || "U"}
               </div>
+              <button
+                onClick={handleLogout}
+                className="p-1 rounded text-red-500 hover:bg-red-50"
+                title="Logout session"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
             </div>
           )}
         </div>

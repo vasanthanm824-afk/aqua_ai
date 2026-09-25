@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { ensureDatabaseSeeded } from "@/lib/db-auto-seed";
 import { BASELINE_SETTLEMENTS } from "@/lib/fallback-data";
+import { isAdminRole } from "@/lib/permissions";
 import {
   findNearestCommunity,
   evaluateComplaintPriority,
@@ -17,6 +18,9 @@ import {
 export async function GET(request: Request) {
   try {
     await ensureDatabaseSeeded();
+    const session = await getSessionUser();
+    const isAdmin = isAdminRole(session?.role);
+
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search")?.toLowerCase().trim();
     const category = searchParams.get("category");
@@ -25,9 +29,15 @@ export async function GET(request: Request) {
     const communityId = searchParams.get("communityId");
     const verificationStatus = searchParams.get("verificationStatus");
     const assignedOfficerId = searchParams.get("assignedOfficerId");
+    const myOnly = searchParams.get("my") === "true";
     const limit = Math.min(parseInt(searchParams.get("limit") || "100", 10), 200);
 
     const where: any = {};
+
+    // User scope constraint: non-admin or explicit ?my=true returns only user's own complaints
+    if ((myOnly || !isAdmin) && session?.id) {
+      where.reporterId = session.id;
+    }
 
     if (category && category !== "ALL") where.category = category;
     if (status && status !== "ALL") where.status = status;
@@ -35,6 +45,7 @@ export async function GET(request: Request) {
     if (communityId && communityId !== "ALL") where.communityId = communityId;
     if (verificationStatus && verificationStatus !== "ALL") where.verificationStatus = verificationStatus;
     if (assignedOfficerId && assignedOfficerId !== "ALL") where.assignedOfficerId = assignedOfficerId;
+
 
     if (search) {
       where.OR = [
@@ -406,6 +417,18 @@ export async function POST(request: Request) {
       };
     }
 
+    // Create Admin notification for newly registered grievance
+    try {
+      await prisma.notification.create({
+        data: {
+          type: "NEW_COMPLAINT",
+          title: "NEW GRIEVANCE REGISTERED",
+          message: `Tracking ID: ${trackingId} | Category: ${category} | Location: ${resolvedLocationName} | Priority: ${priority}`,
+          communityId: resolvedCommunityId || undefined,
+        },
+      });
+    } catch (e) {}
+
     return NextResponse.json({
       success: true,
       message: "Grievance registered and routed successfully.",
@@ -414,6 +437,7 @@ export async function POST(request: Request) {
       complaintNumber,
       routing,
     });
+
   } catch (error: any) {
     console.error("POST /api/complaints error:", error);
     return NextResponse.json(

@@ -58,3 +58,10 @@ export function hasPermission(
 ): boolean {
   return !!ROLE_PERMISSIONS[role]?.[permission];
 }
+
+export function isAdminRole(role?: string | null): boolean {
+  if (!role) return false;
+  const upper = role.toUpperCase();
+  return upper === "ADMINISTRATOR" || upper === "ADMIN" || upper === "ANALYST" || upper === "FIELD_OFFICER";
+}
+

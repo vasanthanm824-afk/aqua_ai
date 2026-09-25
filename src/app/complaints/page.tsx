@@ -107,7 +107,12 @@ function ComplaintCenterContent() {
 
   useEffect(() => {
     loadComplaints();
+    const interval = setInterval(() => {
+      loadComplaints();
+    }, 10000);
+    return () => clearInterval(interval);
   }, [selectedCategory, selectedStatus, selectedPriority, selectedCommunityId]);
+
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
