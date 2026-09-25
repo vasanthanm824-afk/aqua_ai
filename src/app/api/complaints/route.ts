@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { ensureDatabaseSeeded } from "@/lib/db-auto-seed";
 import { BASELINE_SETTLEMENTS } from "@/lib/fallback-data";
 import { isAdminRole } from "@/lib/permissions";
+import { sendGrievanceSmsConfirmation } from "@/lib/sms";
 import {
   findNearestCommunity,
   evaluateComplaintPriority,
@@ -14,6 +15,7 @@ import {
   determineComplaintDepartment,
   generateUniqueTrackingId,
 } from "@/lib/complaint-routing";
+
 
 export async function GET(request: Request) {
   try {
@@ -429,6 +431,24 @@ export async function POST(request: Request) {
       });
     } catch (e) {}
 
+    // Dispatch automated SMS confirmation to citizen phone number
+    let smsResult = null;
+    const phoneToSms = finalReporterContact || reporterContact || "";
+    if (phoneToSms && /\d{5,}/.test(phoneToSms)) {
+      try {
+        smsResult = await sendGrievanceSmsConfirmation({
+          toPhoneNumber: phoneToSms,
+          trackingId,
+          complaintNumber,
+          category,
+          department: routing.department,
+          locationName: resolvedLocationName,
+        });
+      } catch (smsErr) {
+        console.warn("⚠️ SMS dispatch error:", smsErr);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       message: "Grievance registered and routed successfully.",
@@ -436,7 +456,9 @@ export async function POST(request: Request) {
       trackingId,
       complaintNumber,
       routing,
+      smsResult,
     });
+
 
   } catch (error: any) {
     console.error("POST /api/complaints error:", error);

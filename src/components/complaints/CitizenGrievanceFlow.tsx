@@ -438,8 +438,9 @@ export function CitizenGrievanceFlow({
       }
 
       const json = await res.json();
-      setRegisteredComplaint(json.data);
+      setRegisteredComplaint({ ...json.data, smsResult: json.smsResult });
       setCurrentStep(6); // Step 6: Registered
+
 
       if (onComplete) {
         onComplete(json.data);
@@ -1297,6 +1298,21 @@ export function CitizenGrievanceFlow({
                 </span>
               </div>
             </div>
+
+            {/* SMS Notification Banner */}
+            {registeredComplaint.smsResult && (
+              <div className="max-w-md mx-auto p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between gap-2 text-left">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="font-bold">📱 SMS Confirmation Dispatched:</span>
+                </div>
+                <span className="font-mono text-[11px] text-emerald-900">
+                  {registeredComplaint.smsResult.recipient} ({registeredComplaint.smsResult.status})
+                </span>
+              </div>
+            )}
+
+
 
             {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
