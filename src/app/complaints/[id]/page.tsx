@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
@@ -30,6 +30,7 @@ import {
   COMPLAINT_PRIORITIES,
   COMPLAINT_CATEGORIES,
 } from "@/lib/complaints";
+import { maskPhoneNumber } from "@/lib/sms";
 
 export default function ComplaintDetailPage() {
   const params = useParams();
@@ -561,8 +562,8 @@ export default function ComplaintDetailPage() {
                       : complaint.reporterName || "Citizen"}
                   </span>
                   {!complaint.isAnonymous && complaint.reporterContact && (
-                    <span className="text-[10px] text-slate-500 block">
-                      {complaint.reporterContact}
+                    <span className="text-[10px] text-slate-500 block font-mono">
+                      {maskPhoneNumber(complaint.reporterContact)}
                     </span>
                   )}
                 </div>

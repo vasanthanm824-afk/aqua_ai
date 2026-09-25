@@ -4,18 +4,16 @@ import { getSessionUser } from "@/lib/auth";
 import { ensureDatabaseSeeded } from "@/lib/db-auto-seed";
 import { BASELINE_SETTLEMENTS } from "@/lib/fallback-data";
 import { isAdminRole } from "@/lib/permissions";
-import { sendGrievanceSmsConfirmation } from "@/lib/sms";
+import { sendGrievanceSmsConfirmation, formatIndianPhoneNumber } from "@/lib/sms";
 import {
   findNearestCommunity,
   evaluateComplaintPriority,
   detectComplaintHotspots,
-  ComplaintCategoryValue,
 } from "@/lib/complaints";
 import {
   determineComplaintDepartment,
   generateUniqueTrackingId,
 } from "@/lib/complaint-routing";
-
 
 export async function GET(request: Request) {
   try {
@@ -48,7 +46,6 @@ export async function GET(request: Request) {
     if (verificationStatus && verificationStatus !== "ALL") where.verificationStatus = verificationStatus;
     if (assignedOfficerId && assignedOfficerId !== "ALL") where.assignedOfficerId = assignedOfficerId;
 
-
     if (search) {
       where.OR = [
         { complaintNumber: { contains: search } },
@@ -56,6 +53,7 @@ export async function GET(request: Request) {
         { title: { contains: search } },
         { description: { contains: search } },
         { locationName: { contains: search } },
+        { reporterContact: { contains: search } },
       ];
     }
 
@@ -96,7 +94,6 @@ export async function GET(request: Request) {
           },
         },
       }),
-      // Fetch compact set for KPI and distribution metrics
       prisma.complaint.findMany({
         select: {
           id: true,
@@ -133,8 +130,8 @@ export async function GET(request: Request) {
     allForStats.forEach((c) => {
       catMap[c.category] = (catMap[c.category] || 0) + 1;
     });
-    const categoryDistribution = Object.entries(catMap).map(([category, count]) => ({
-      category,
+    const categoryDistribution = Object.entries(catMap).map(([cat, count]) => ({
+      category: cat,
       count,
     }));
 
@@ -143,8 +140,8 @@ export async function GET(request: Request) {
     allForStats.forEach((c) => {
       statusMap[c.status] = (statusMap[c.status] || 0) + 1;
     });
-    const statusDistribution = Object.entries(statusMap).map(([status, count]) => ({
-      status,
+    const statusDistribution = Object.entries(statusMap).map(([st, count]) => ({
+      status: st,
       count,
     }));
 
@@ -193,25 +190,37 @@ export async function POST(request: Request) {
       communityId,
       reporterName,
       reporterContact,
+      phoneNumber,
       isAnonymous = false,
       evidence = [],
     } = body;
 
-    // Only description and category are strictly required.
-    // Title is optional (falls back to category label).
-    // locationName is optional (falls back to IP-resolved address or placeholder).
-    if (!description || !category) {
+    // Strict Phone Number Validation (Section 3)
+    const rawPhone = (phoneNumber || reporterContact || "").trim();
+    const phoneInfo = formatIndianPhoneNumber(rawPhone);
+
+    if (!rawPhone || !phoneInfo.isValid) {
       return NextResponse.json(
-        { error: "Description and category are required." },
+        {
+          error:
+            "A valid 10-digit Indian mobile number is required (+91 6xxxx-9xxxx) to register a grievance.",
+        },
         { status: 400 }
       );
     }
 
-    // Build a fallback title from the category if the citizen didn't provide one
-    const resolvedTitle = (title || "").trim() ||
+    // Required fields: Description & Category
+    if (!description || !category) {
+      return NextResponse.json(
+        { error: "Detailed description and grievance category are required." },
+        { status: 400 }
+      );
+    }
+
+    const resolvedTitle =
+      (title || "").trim() ||
       String(category).replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) + " Grievance";
 
-    // Build a fallback locationName if IP geolocation didn't pre-fill it
     const resolvedLocationName = (locationName || "").trim() || "Location not specified";
 
     const lat = typeof latitude === "number" ? latitude : parseFloat(latitude) || null;
@@ -269,7 +278,7 @@ export async function POST(request: Request) {
       communityName: resolvedCommunity?.name || locationName,
     });
 
-    // Generate server-side unique tracking IDs
+    // Generate server-side unique tracking IDs (Section 6)
     let count = 10;
     try {
       count = await prisma.complaint.count();
@@ -307,84 +316,16 @@ export async function POST(request: Request) {
       similarRecentComplaintsCount: similarCount,
     });
 
-    // Determine initial reporter identity based on anonymity preference
+    // Reporter Identity
     const finalReporterName = isAnonymous
       ? "Citizen (Anonymous)"
-      : (reporterName?.trim() || session?.name || "Citizen Reporter");
+      : reporterName?.trim() || session?.name || "Citizen Reporter";
 
-    const finalReporterContact = isAnonymous ? null : (reporterContact?.trim() || session?.email || null);
+    const finalReporterContact = phoneInfo.formatted;
 
-    let newComplaint: any = null;
-    try {
-      newComplaint = await prisma.complaint.create({
-        data: {
-          complaintNumber,
-          trackingId,
-          title: resolvedTitle,
-          description: description.trim(),
-          category,
-          status: "REPORTED",
-          priority,
-          priorityReason,
-          language,
-          locationName: resolvedLocationName,
-          latitude: lat,
-          longitude: lng,
-          locationAccuracy: locAcc,
-          locationCapturedAt: locationCapturedAt ? new Date(locationCapturedAt) : lat ? new Date() : null,
-          evidenceCapturedAt: evidenceCapturedAt ? new Date(evidenceCapturedAt) : null,
-          routedDepartment: routing.department,
-          jurisdiction: routing.jurisdiction,
-          routingStatus: routing.routingStatus,
-          clientIp,
-          communityId: resolvedCommunityId,
-          reporterId: session ? session.id : null,
-          reporterName: finalReporterName,
-          reporterContact: finalReporterContact,
-          isAnonymous: !!isAnonymous,
-          verificationStatus: "UNVERIFIED",
-          evidence: {
-            create: Array.isArray(evidence)
-              ? evidence.map((e: any) => ({
-                  fileUrl: e.fileUrl || e.url || e.dataUrl,
-                  caption: e.caption || "Live camera evidence",
-                  fileType: e.fileType || "image",
-                  captureType: e.captureType || "LIVE_CAMERA",
-                  latitude: e.latitude ?? lat,
-                  longitude: e.longitude ?? lng,
-                  locationAccuracy: e.locationAccuracy ?? locAcc,
-                }))
-              : [],
-          },
-          statusHistory: {
-            create: [
-              {
-                oldStatus: "NONE",
-                newStatus: "REPORTED",
-                changedById: session?.id || null,
-                changedByName: finalReporterName,
-                notes: `Citizen registered grievance via Aqua-Lens Multilingual Citizen Portal. Language: ${language.toUpperCase()}.`,
-              },
-              {
-                oldStatus: "REPORTED",
-                newStatus: "ROUTED",
-                changedById: null,
-                changedByName: "Automatic Department Routing Engine",
-                notes: `Forwarded to ${routing.department} (${routing.jurisdiction}). Nodal Officer: ${routing.nodalOfficer}. SLA: ${routing.slaHours} hours.`,
-              },
-            ],
-          },
-        },
-        include: {
-          community: true,
-          evidence: true,
-          statusHistory: true,
-        },
-      });
-    } catch (createErr) {
-      console.error("DB complaint.create fallback:", createErr);
-      newComplaint = {
-        id: "cmp-" + Date.now(),
+    // STEP 1: CREATE THE COMPLAINT IN DATABASE FIRST (Section 5)
+    const newComplaint = await prisma.complaint.create({
+      data: {
         complaintNumber,
         trackingId,
         title: resolvedTitle,
@@ -397,56 +338,99 @@ export async function POST(request: Request) {
         locationName: resolvedLocationName,
         latitude: lat,
         longitude: lng,
+        locationAccuracy: locAcc,
+        locationCapturedAt: locationCapturedAt ? new Date(locationCapturedAt) : lat ? new Date() : null,
+        evidenceCapturedAt: evidenceCapturedAt ? new Date(evidenceCapturedAt) : null,
         routedDepartment: routing.department,
         jurisdiction: routing.jurisdiction,
         routingStatus: routing.routingStatus,
+        clientIp,
+        communityId: resolvedCommunityId,
+        reporterId: session ? session.id : null,
         reporterName: finalReporterName,
         reporterContact: finalReporterContact,
         isAnonymous: !!isAnonymous,
         verificationStatus: "UNVERIFIED",
-        createdAt: new Date().toISOString(),
-        community: resolvedCommunity,
-        evidence: Array.isArray(evidence) ? evidence : [],
-        statusHistory: [
-          {
-            oldStatus: "NONE",
-            newStatus: "REPORTED",
-            changedByName: finalReporterName,
-            notes: `Citizen registered grievance via Aqua-Lens Multilingual Citizen Portal.`,
-            createdAt: new Date().toISOString(),
-          },
-        ],
-      };
+        evidence: {
+          create: Array.isArray(evidence)
+            ? evidence.map((e: any) => ({
+                fileUrl: e.fileUrl || e.url || e.dataUrl,
+                caption: e.caption || "Live camera evidence",
+                fileType: e.fileType || "image",
+                captureType: e.captureType || "LIVE_CAMERA",
+                latitude: e.latitude ?? lat,
+                longitude: e.longitude ?? lng,
+                locationAccuracy: e.locationAccuracy ?? locAcc,
+              }))
+            : [],
+        },
+        statusHistory: {
+          create: [
+            {
+              oldStatus: "NONE",
+              newStatus: "REPORTED",
+              changedById: session?.id || null,
+              changedByName: finalReporterName,
+              notes: `Citizen registered grievance with contact ${phoneInfo.formatted}. Language: ${language.toUpperCase()}.`,
+            },
+            {
+              oldStatus: "REPORTED",
+              newStatus: "ROUTED",
+              changedById: null,
+              changedByName: "Automatic Department Routing Engine",
+              notes: `Forwarded to ${routing.department} (${routing.jurisdiction}). Nodal Officer: ${routing.nodalOfficer}. SLA: ${routing.slaHours} hours.`,
+            },
+          ],
+        },
+      },
+      include: {
+        community: true,
+        evidence: true,
+        statusHistory: true,
+      },
+    });
+
+    // STEP 2: CREATE ADMIN NOTIFICATIONS (Section 9)
+    try {
+      const adminUsers = await prisma.user.findMany({
+        where: { role: "ADMINISTRATOR" },
+        select: { id: true },
+      });
+      if (adminUsers.length > 0) {
+        await prisma.notification.createMany({
+          data: adminUsers.map((admin) => ({
+            userId: admin.id,
+            title: "NEW CITIZEN GRIEVANCE",
+            message: `Tracking ID: ${trackingId} | Category: ${category.replace(/_/g, " ")} | Location: ${resolvedLocationName} | Priority: ${priority}`,
+            link: `/complaints/${newComplaint.id}`,
+          })),
+        });
+      }
+    } catch (notifErr) {
+      console.warn("⚠️ Admin notification creation error:", notifErr);
     }
 
-    // Create Admin notification for newly registered grievance
-    try {
-      await prisma.notification.create({
-        data: {
-          type: "NEW_COMPLAINT",
-          title: "NEW GRIEVANCE REGISTERED",
-          message: `Tracking ID: ${trackingId} | Category: ${category} | Location: ${resolvedLocationName} | Priority: ${priority}`,
-          communityId: resolvedCommunityId || undefined,
-        },
-      });
-    } catch (e) {}
-
-    // Dispatch automated SMS confirmation to citizen phone number
+    // STEP 3: SEND SMS CONFIRMATION TO CITIZEN AFTER DATABASE CREATION (Section 10 & 11)
     let smsResult = null;
-    const phoneToSms = finalReporterContact || reporterContact || "";
-    if (phoneToSms && /\d{5,}/.test(phoneToSms)) {
-      try {
-        smsResult = await sendGrievanceSmsConfirmation({
-          toPhoneNumber: phoneToSms,
-          trackingId,
-          complaintNumber,
-          category,
-          department: routing.department,
-          locationName: resolvedLocationName,
-        });
-      } catch (smsErr) {
-        console.warn("⚠️ SMS dispatch error:", smsErr);
-      }
+    try {
+      smsResult = await sendGrievanceSmsConfirmation({
+        toPhoneNumber: phoneInfo.formatted,
+        trackingId,
+        complaintNumber,
+        category,
+        department: routing.department,
+        locationName: resolvedLocationName,
+      });
+    } catch (smsErr: any) {
+      console.warn("⚠️ SMS dispatch error (Complaint remains valid in DB):", smsErr);
+      smsResult = {
+        success: false,
+        status: "FAILED",
+        provider: "SMS Service",
+        recipient: phoneInfo.formatted,
+        message: "",
+        error: smsErr.message || "Failed to deliver SMS confirmation.",
+      };
     }
 
     return NextResponse.json({
@@ -458,8 +442,6 @@ export async function POST(request: Request) {
       routing,
       smsResult,
     });
-
-
   } catch (error: any) {
     console.error("POST /api/complaints error:", error);
     return NextResponse.json(

@@ -15,25 +15,20 @@ import {
   RefreshCw,
   Copy,
   Check,
-  ShieldCheck,
   Building2,
-  FileText,
-  Volume2,
-  Sparkles,
-  Search,
-  ExternalLink,
   ChevronRight,
   Send,
-  Eye,
-  EyeOff,
+  Phone,
+  MessageSquare,
+  Smartphone,
+  ExternalLink,
 } from "lucide-react";
 import {
   INDIAN_LANGUAGES,
-  COMPLAINT_TRANSLATIONS,
   getComplaintTranslation,
-  LanguageOption,
 } from "@/lib/i18n-complaints";
 import { determineComplaintDepartment } from "@/lib/complaint-routing";
+import { formatIndianPhoneNumber, maskPhoneNumber } from "@/lib/sms";
 
 interface CitizenGrievanceFlowProps {
   onComplete?: (complaintData: any) => void;
@@ -48,7 +43,8 @@ export function CitizenGrievanceFlow({
   preselectedCommunityId,
   initialDistrict = "Ramanathapuram",
 }: CitizenGrievanceFlowProps) {
-  // Step State: 1 = Language, 2 = Description, 3 = Live Camera, 4 = GPS Location, 5 = Review & Routing, 6 = Registered
+  // Step State: 
+  // 1 = Language, 2 = Description & Voice, 3 = Live Photo, 4 = GPS Location, 5 = Mobile Number & Review, 6 = Registered Success
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [language, setLanguage] = useState<string>("en");
   const t = getComplaintTranslation(language);
@@ -61,7 +57,10 @@ export function CitizenGrievanceFlow({
   const [locationName, setLocationName] = useState<string>("");
   const [isAnonymous, setIsAnonymous] = useState<boolean>(false);
   const [reporterName, setReporterName] = useState<string>("");
-  const [reporterContact, setReporterContact] = useState<string>("");
+  
+  // Mandatory Phone Number State (Section 3)
+  const [phoneNumberInput, setPhoneNumberInput] = useState<string>("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
 
   // Voice Recording State
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -72,14 +71,14 @@ export function CitizenGrievanceFlow({
 
   // Live Camera State
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null); // persists across renders
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraPermissionDenied, setCameraPermissionDenied] = useState<boolean>(false);
   const [livePhotoDataUrl, setLivePhotoDataUrl] = useState<string | null>(null);
   const [photoTimestamp, setPhotoTimestamp] = useState<string | null>(null);
   const [ipLocationLoading, setIpLocationLoading] = useState<boolean>(false);
 
-  // GPS Location State (Requirement 7 & 8)
+  // GPS Location State
   const [gpsLoading, setGpsLoading] = useState<boolean>(false);
   const [gpsCoords, setGpsCoords] = useState<{
     latitude: number;
@@ -90,23 +89,25 @@ export function CitizenGrievanceFlow({
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [nearestCommunity, setNearestCommunity] = useState<any>(null);
 
-  // Routing and Submission State
+  // Submission & SMS State
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [registeredComplaint, setRegisteredComplaint] = useState<any>(null);
   const [copiedTrackingId, setCopiedTrackingId] = useState<boolean>(false);
+  const [resendingSms, setResendingSms] = useState<boolean>(false);
+  const [resendSmsNotice, setResendSmsNotice] = useState<string | null>(null);
 
-  // Attach camera stream to video element once it's mounted in the DOM
+  // Camera video binding
   useEffect(() => {
     if (cameraActive && videoRef.current && mediaStreamRef.current) {
       videoRef.current.srcObject = mediaStreamRef.current;
       videoRef.current.play().catch((e) =>
-        console.warn("Video play() error:", e)
+        console.warn("Video play error:", e)
       );
     }
   }, [cameraActive]);
 
-  // Check speech recognition capability on mount
+  // Check Web Speech API
   useEffect(() => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -115,7 +116,7 @@ export function CitizenGrievanceFlow({
     }
   }, []);
 
-  // Update speech recognition language when citizen changes language
+  // Update speech recognition language
   useEffect(() => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -162,7 +163,7 @@ export function CitizenGrievanceFlow({
 
       recognitionRef.current = recognition;
     } catch (e) {
-      console.warn("Failed to initialize speech recognition:", e);
+      console.warn("Speech recognition init error:", e);
       setVoiceSupported(false);
     }
 
@@ -175,7 +176,6 @@ export function CitizenGrievanceFlow({
     };
   }, [language]);
 
-  // Voice toggle
   const toggleVoice = () => {
     if (!recognitionRef.current) return;
     if (isListening) {
@@ -192,9 +192,6 @@ export function CitizenGrievanceFlow({
     }
   };
 
-  // Start Live Camera stream (WebRTC only — no device file picker)
-  // Stream is stored in a ref; the video element is mounted AFTER setCameraActive(true),
-  // so the useEffect above handles attaching srcObject once the DOM node exists.
   const startCamera = async () => {
     setCameraPermissionDenied(false);
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -210,8 +207,8 @@ export function CitizenGrievanceFlow({
         },
         audio: false,
       });
-      mediaStreamRef.current = stream; // store before state update
-      setCameraActive(true);           // triggers re-render → video mounts → useEffect attaches stream
+      mediaStreamRef.current = stream;
+      setCameraActive(true);
     } catch (err: any) {
       console.error("Camera access error:", err);
       setCameraPermissionDenied(true);
@@ -219,7 +216,6 @@ export function CitizenGrievanceFlow({
     }
   };
 
-  // Stop Live Camera stream
   const stopCamera = () => {
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -231,7 +227,6 @@ export function CitizenGrievanceFlow({
     setCameraActive(false);
   };
 
-  // Capture Live Snapshot from Video, then auto-resolve address via IP geolocation
   const capturePhotoFromVideo = async () => {
     if (!videoRef.current) return;
     const video = videoRef.current;
@@ -243,7 +238,6 @@ export function CitizenGrievanceFlow({
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Timestamp watermark
     const now = new Date();
     const timestampStr = now.toLocaleDateString("en-IN", {
       day: "2-digit",
@@ -264,18 +258,12 @@ export function CitizenGrievanceFlow({
     setPhotoTimestamp(now.toISOString());
     stopCamera();
 
-    // Auto-resolve approximate address from IP geolocation
     setIpLocationLoading(true);
     try {
       const geoRes = await fetch("https://ipapi.co/json/");
       if (geoRes.ok) {
         const geo = await geoRes.json();
-        // Build address string from IP geolocation response
-        const parts = [
-          geo.city,
-          geo.region,
-          geo.country_name,
-        ].filter(Boolean);
+        const parts = [geo.city, geo.region, geo.country_name].filter(Boolean);
         if (parts.length > 0 && !locationName) {
           setLocationName(parts.join(", "));
         }
@@ -287,7 +275,6 @@ export function CitizenGrievanceFlow({
     }
   };
 
-  // Acquire current GPS location (Requirement 7)
   const acquireGpsLocation = () => {
     setGpsLoading(true);
     setGpsError(null);
@@ -310,13 +297,11 @@ export function CitizenGrievanceFlow({
           timestamp: nowIso,
         });
 
-        // Try to reverse-resolve nearest community
         try {
           const res = await fetch(`/api/communities?limit=100`);
           if (res.ok) {
             const data = await res.json();
             if (data.data && data.data.length > 0) {
-              // Find closest community using Haversine
               let closest = data.data[0];
               let minDist = 999999;
               data.data.forEach((comm: any) => {
@@ -365,7 +350,6 @@ export function CitizenGrievanceFlow({
     );
   };
 
-  // Determine Jurisdiction & Department Routing (Requirement 10 & 11)
   const routing = determineComplaintDepartment({
     category,
     district: nearestCommunity?.district || initialDistrict,
@@ -374,7 +358,22 @@ export function CitizenGrievanceFlow({
     communityName: nearestCommunity?.name || locationName,
   });
 
-  // Submit Official Grievance (Requirement 12 & 13)
+  // Real-time Mobile Number Validation (Section 3)
+  const validatePhone = (val: string): boolean => {
+    const info = formatIndianPhoneNumber(val);
+    if (!val.trim()) {
+      setPhoneError("Mobile number is required to receive your tracking ID and status updates.");
+      return false;
+    }
+    if (!info.isValid) {
+      setPhoneError("Please enter a valid 10-digit Indian mobile number (e.g., 9876543210).");
+      return false;
+    }
+    setPhoneError(null);
+    return true;
+  };
+
+  // Submit Grievance
   const handleSubmitGrievance = async () => {
     if (!description.trim() || !category) {
       setSubmitError("Please fill out the detailed grievance description.");
@@ -394,8 +393,16 @@ export function CitizenGrievanceFlow({
       return;
     }
 
+    if (!validatePhone(phoneNumberInput)) {
+      setSubmitError("A valid 10-digit Indian mobile number is required.");
+      setCurrentStep(5);
+      return;
+    }
+
     setSubmitting(true);
     setSubmitError(null);
+
+    const formattedPhone = formatIndianPhoneNumber(phoneNumberInput).formatted;
 
     try {
       const payload = {
@@ -411,7 +418,8 @@ export function CitizenGrievanceFlow({
         language,
         communityId: nearestCommunity?.id || preselectedCommunityId || null,
         reporterName: isAnonymous ? "Citizen (Anonymous)" : reporterName || "Citizen Reporter",
-        reporterContact: isAnonymous ? null : reporterContact || null,
+        reporterContact: formattedPhone,
+        phoneNumber: formattedPhone,
         isAnonymous,
         evidence: [
           {
@@ -432,15 +440,14 @@ export function CitizenGrievanceFlow({
         body: JSON.stringify(payload),
       });
 
+      const json = await res.json();
+
       if (!res.ok) {
-        const errorJson = await res.json();
-        throw new Error(errorJson.error || "Failed to register grievance.");
+        throw new Error(json.error || "Failed to register grievance.");
       }
 
-      const json = await res.json();
       setRegisteredComplaint({ ...json.data, smsResult: json.smsResult });
-      setCurrentStep(6); // Step 6: Registered
-
+      setCurrentStep(6); // Success Step
 
       if (onComplete) {
         onComplete(json.data);
@@ -450,6 +457,29 @@ export function CitizenGrievanceFlow({
       setSubmitError(err.message || "Failed to submit grievance. Please try again.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Resend SMS Handler (Section 12)
+  const handleResendSms = async () => {
+    if (!registeredComplaint) return;
+    setResendingSms(true);
+    setResendSmsNotice(null);
+    try {
+      const res = await fetch(`/api/complaints/${registeredComplaint.id}/resend-sms`, {
+        method: "POST",
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setResendSmsNotice("✓ SMS resent successfully!");
+        setRegisteredComplaint((prev: any) => ({ ...prev, smsResult: json.smsResult }));
+      } else {
+        setResendSmsNotice(`⚠️ Resend attempt: ${json.error || "Could not deliver SMS"}`);
+      }
+    } catch (err: any) {
+      setResendSmsNotice(`⚠️ SMS Error: ${err.message}`);
+    } finally {
+      setResendingSms(false);
     }
   };
 
@@ -473,7 +503,7 @@ export function CitizenGrievanceFlow({
           <p className="text-[11px] text-cyan-300/80 mt-0.5">{t.subtitle}</p>
         </div>
 
-        {/* Global Quick Language Pill */}
+        {/* Language Selector Pill */}
         <div className="flex items-center gap-2 bg-[#060e1e] border border-cyan-500/30 rounded-lg px-2.5 py-1">
           <Globe2 className="w-3.5 h-3.5 text-blue-600" />
           <select
@@ -490,15 +520,15 @@ export function CitizenGrievanceFlow({
         </div>
       </div>
 
-      {/* 6-Step Visual Stepper Progress Bar */}
+      {/* Stepper Progress Bar */}
       <div className="bg-[#07101f] border-b border-slate-200 px-4 py-3 overflow-x-auto">
-        <div className="flex items-center justify-between min-w-[500px] text-xs">
+        <div className="flex items-center justify-between min-w-[560px] text-xs">
           {[
             { step: 1, label: t.steps.language },
             { step: 2, label: t.steps.description },
             { step: 3, label: t.steps.evidence },
             { step: 4, label: t.steps.location },
-            { step: 5, label: t.steps.review },
+            { step: 5, label: "Mobile & Review" },
             { step: 6, label: t.steps.completed },
           ].map((s) => (
             <div
@@ -529,7 +559,7 @@ export function CitizenGrievanceFlow({
         </div>
       </div>
 
-      {/* Error Banner */}
+      {/* Global Error Alert Banner */}
       {submitError && (
         <div className="mx-6 mt-4 p-3 rounded-xl bg-red-950/60 border border-red-500/40 text-xs text-red-200 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -545,7 +575,7 @@ export function CitizenGrievanceFlow({
         </div>
       )}
 
-      {/* Step Content Area */}
+      {/* Step Content */}
       <div className="p-6">
         {/* ================= STEP 1: CHOOSE LANGUAGE ================= */}
         {currentStep === 1 && (
@@ -598,7 +628,6 @@ export function CitizenGrievanceFlow({
         {/* ================= STEP 2: DESCRIBE THE GRIEVANCE ================= */}
         {currentStep === 2 && (
           <div className="space-y-5 animate-in fade-in duration-200">
-            {/* Category Selector */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 {t.complaint.categoryLabel}
@@ -616,7 +645,7 @@ export function CitizenGrievanceFlow({
               </select>
             </div>
 
-            {/* Voice-to-Complaint Hero Action (Requirement 3) */}
+            {/* Voice-to-Complaint Card */}
             <div className="rounded-xl border border-cyan-500/40 bg-gradient-to-b from-[#0c2044] to-[#091530] p-4 shadow-lg space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
@@ -626,8 +655,7 @@ export function CitizenGrievanceFlow({
                   </h4>
                   <p className="text-[11px] text-slate-600 mt-0.5">
                     Speak your complaint in{" "}
-                    <b>{INDIAN_LANGUAGES.find((l) => l.code === language)?.name}</b>. Transcribed text
-                    can be edited freely.
+                    <b>{INDIAN_LANGUAGES.find((l) => l.code === language)?.name}</b>.
                   </p>
                 </div>
 
@@ -656,7 +684,6 @@ export function CitizenGrievanceFlow({
                 )}
               </div>
 
-              {/* Listening Status Animation */}
               {isListening && (
                 <div className="flex items-center gap-2 p-2.5 rounded-lg bg-red-950/40 border border-red-500/30 text-xs text-red-200">
                   <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping" />
@@ -666,34 +693,9 @@ export function CitizenGrievanceFlow({
                   )}
                 </div>
               )}
-
-              {!voiceSupported && (
-                <p className="text-[11px] text-amber-300/80 bg-amber-950/30 border border-amber-500/30 p-2 rounded-lg">
-                  {t.voice.voiceFallbackNotice}
-                </p>
-              )}
             </div>
 
-            {/* Title Input — Brief Grievance Summary (Optional) */}
-            <div>
-              <div className="flex items-center gap-2 mb-1.5">
-                <label className="block text-xs font-bold text-slate-700">
-                  {t.complaint.titleLabel}
-                </label>
-                <span className="text-[10px] font-normal text-slate-500 bg-slate-100/60 border border-slate-200 px-1.5 py-0.5 rounded">
-                  Optional
-                </span>
-              </div>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder={t.complaint.titlePlaceholder}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
-              />
-            </div>
-
-            {/* Description Textarea — Detailed Description (Required) */}
+            {/* Description Textarea (Required) */}
             <div>
               <div className="flex justify-between items-center mb-1.5">
                 <label className="block text-xs font-bold text-slate-700">
@@ -718,21 +720,21 @@ export function CitizenGrievanceFlow({
               />
             </div>
 
-            {/* Affected Service / Asset */}
+            {/* Title / Brief summary */}
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">
-                {t.complaint.serviceAffected}
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                {t.complaint.titleLabel} (Optional)
               </label>
               <input
                 type="text"
-                value={affectedService}
-                onChange={(e) => setAffectedService(e.target.value)}
-                placeholder={t.complaint.servicePlaceholder}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={t.complaint.titlePlaceholder}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
               />
             </div>
 
-            {/* Buttons */}
+            {/* Navigation Buttons */}
             <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
               <button
                 type="button"
@@ -769,7 +771,6 @@ export function CitizenGrievanceFlow({
               <p className="text-xs text-slate-500 mt-0.5">{t.evidence.subtitle}</p>
             </div>
 
-            {/* Live Camera Viewfinder or Captured Preview */}
             <div className="relative rounded-2xl border-2 border-dashed border-cyan-500/40 bg-[#050d1a] overflow-hidden min-h-[260px] flex flex-col items-center justify-center p-4">
               {livePhotoDataUrl ? (
                 <div className="w-full space-y-3">
@@ -785,21 +786,9 @@ export function CitizenGrievanceFlow({
                   </div>
 
                   <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-500 text-[11px]">
-                        {t.evidence.timestamp}: {new Date().toLocaleTimeString("en-IN")}
-                      </span>
-                      {ipLocationLoading && (
-                        <span className="text-[10px] text-blue-600 font-mono animate-pulse">
-                          ⌕ Resolving location from network...
-                        </span>
-                      )}
-                      {locationName && !ipLocationLoading && (
-                        <span className="text-[10px] text-emerald-700 font-mono">
-                          📍 {locationName}
-                        </span>
-                      )}
-                    </div>
+                    <span className="text-slate-500 text-[11px]">
+                      {t.evidence.timestamp}: {new Date().toLocaleTimeString("en-IN")}
+                    </span>
                     <button
                       type="button"
                       onClick={() => {
@@ -861,9 +850,6 @@ export function CitizenGrievanceFlow({
                     <div className="p-3 rounded-lg bg-red-950/50 border border-red-500/40 text-xs text-red-200 max-w-sm text-left">
                       <b className="block mb-1">{t.evidence.permissionDenied}</b>
                       <span>{t.evidence.permissionInstructions}</span>
-                      <p className="mt-2 text-red-300/80">
-                        Tip: Open your browser site settings and allow camera access, then reload this page.
-                      </p>
                     </div>
                   )}
 
@@ -875,15 +861,10 @@ export function CitizenGrievanceFlow({
                     <Camera className="w-4 h-4" />
                     <span>{t.evidence.takeLivePhoto}</span>
                   </button>
-
-                  <p className="text-[10px] text-slate-500 max-w-xs">
-                    Only live in-app camera capture is accepted. File uploads from device gallery are not permitted.
-                  </p>
                 </div>
               )}
             </div>
 
-            {/* Navigation Buttons */}
             <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
               <button
                 type="button"
@@ -918,7 +899,6 @@ export function CitizenGrievanceFlow({
               <p className="text-xs text-slate-500 mt-0.5">{t.location.subtitle}</p>
             </div>
 
-            {/* GPS Detection Box */}
             <div className="rounded-2xl border border-cyan-500/30 bg-white p-5 space-y-4">
               {gpsCoords ? (
                 <div className="space-y-3">
@@ -946,21 +926,11 @@ export function CitizenGrievanceFlow({
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-500 block">{t.location.accuracy}</span>
-                      <span
-                        className={`font-mono font-bold ${
-                          gpsCoords.accuracy > 100 ? "text-amber-400" : "text-emerald-700"
-                        }`}
-                      >
+                      <span className="font-mono font-bold text-emerald-700">
                         ± {gpsCoords.accuracy} meters
                       </span>
                     </div>
                   </div>
-
-                  {gpsCoords.accuracy > 100 && (
-                    <p className="text-[11px] text-amber-700 bg-amber-950/40 border border-amber-500/30 p-2 rounded-lg">
-                      ⚠️ {t.location.accuracyLowWarning}
-                    </p>
-                  )}
 
                   {nearestCommunity && (
                     <div className="p-3 rounded-xl bg-cyan-950/40 border border-cyan-500/40">
@@ -970,28 +940,23 @@ export function CitizenGrievanceFlow({
                       <span className="text-sm font-bold text-slate-900">{nearestCommunity.name}</span>
                       <span className="text-xs text-slate-500 block mt-0.5">
                         {nearestCommunity.block ? `${nearestCommunity.block}, ` : ""}
-                        {nearestCommunity.district}, {nearestCommunity.state || "Tamil Nadu"} (Census ID: {nearestCommunity.code})
+                        {nearestCommunity.district}, {nearestCommunity.state || "Tamil Nadu"}
                       </span>
                     </div>
                   )}
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1">
-                      Locality / Specific Landmark (Optional clarification)
+                      Locality / Specific Landmark
                     </label>
                     <input
                       type="text"
                       value={locationName}
                       onChange={(e) => setLocationName(e.target.value)}
                       placeholder="e.g. Near East Jetty Standpost / Beach Road Culvert"
-                      className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
                     />
-
                   </div>
-
-                  <p className="text-[10px] text-slate-500 italic">
-                    ℹ️ {t.location.accuracyNotice}
-                  </p>
                 </div>
               ) : (
                 <div className="flex flex-col items-center text-center p-6 space-y-3">
@@ -1001,8 +966,7 @@ export function CitizenGrievanceFlow({
                   <div>
                     <h4 className="text-sm font-bold text-slate-900">Enable GPS Geolocation</h4>
                     <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                      Aqua-Lens routes your grievance to the local panchayat and district water body
-                      using verified device hardware coordinates.
+                      Aqua-Lens routes your grievance using hardware device GPS coordinates.
                     </p>
                   </div>
 
@@ -1034,7 +998,6 @@ export function CitizenGrievanceFlow({
               )}
             </div>
 
-            {/* Navigation Buttons */}
             <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
               <button
                 type="button"
@@ -1051,97 +1014,95 @@ export function CitizenGrievanceFlow({
                 onClick={() => setCurrentStep(5)}
                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 px-6 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-600/25 transition-all disabled:opacity-50"
               >
-                <span>Continue to Routing & Review →</span>
+                <span>Continue to Mobile Number & Review →</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
         )}
 
-        {/* ================= STEP 5: REVIEW & DEPARTMENT ROUTING ================= */}
+        {/* ================= STEP 5: MOBILE NUMBER & FINAL REVIEW ================= */}
         {currentStep === 5 && (
           <div className="space-y-5 animate-in fade-in duration-200">
             <div>
-              <h3 className="text-base font-bold text-slate-900">{t.review.title}</h3>
-              <p className="text-xs text-slate-500 mt-0.5">{t.review.subtitle}</p>
-            </div>
-
-            {/* Automatic Department Routing Card (Requirement 10 & 11) */}
-            <div className="rounded-2xl border border-cyan-500/40 bg-gradient-to-br from-[#0c2044] to-[#071326] p-4 shadow-xl space-y-3">
-              <div className="flex items-center justify-between border-b border-cyan-500/20 pb-2.5">
-                <span className="text-xs font-bold text-blue-700 flex items-center gap-1.5">
-                  <Building2 className="w-4 h-4 text-blue-600" />
-                  <span>{t.routing.title}</span>
-                </span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-700 border border-emerald-500/40">
-                  {t.routing.statusReady}
-                </span>
-              </div>
-
-              <div className="space-y-2 text-xs">
-                <div className="flex justify-between py-1 border-b border-slate-200">
-                  <span className="text-slate-500">{t.routing.category}:</span>
-                  <span className="font-bold text-slate-900">
-                    {t.complaint.categories[category] || category}
-                  </span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-slate-200">
-                  <span className="text-slate-500">{t.routing.locality}:</span>
-                  <span className="font-bold text-blue-700">
-                    {nearestCommunity?.name || locationName}
-                  </span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-slate-200">
-                  <span className="text-slate-500">{t.routing.jurisdiction}:</span>
-                  <span className="text-slate-700">{routing.jurisdiction}</span>
-                </div>
-                <div className="flex flex-col py-1 border-b border-slate-200">
-                  <span className="text-slate-500 text-[11px] mb-0.5">{t.routing.department}:</span>
-                  <span className="font-extrabold text-blue-600">{routing.department}</span>
-                </div>
-                <div className="flex justify-between py-1 text-[11px] text-slate-500">
-                  <span>Nodal Resolution Officer:</span>
-                  <span className="text-slate-600">{routing.nodalOfficer}</span>
-                </div>
-              </div>
-
-              <p className="text-[10px] text-slate-500 italic">
-                ℹ️ {t.routing.transparencyNote}
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Smartphone className="w-4 h-4 text-blue-600" />
+                <span>Mobile Number & Final Grievance Review</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Provide your mobile number to receive your tracking ID and status updates.
               </p>
             </div>
 
-            {/* Grievance Summary Card */}
-            <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 text-xs">
-              <div className="flex items-start gap-3">
-                {livePhotoDataUrl && (
-                  <img
-                    src={livePhotoDataUrl}
-                    alt="Live Evidence"
-                    className="w-20 h-20 rounded-lg object-cover border border-cyan-500/40 shrink-0"
-                  />
-                )}
-                <div className="space-y-1 overflow-hidden">
-                  <h4 className="font-bold text-slate-900 text-sm truncate">{title}</h4>
-                  <p className="text-slate-600 text-xs line-clamp-3">{description}</p>
-                  {affectedService && (
-                    <span className="text-[10px] text-blue-600 block">
-                      Asset: {affectedService}
-                    </span>
-                  )}
-                </div>
+            {/* MANDATORY MOBILE NUMBER CARD (Section 3) */}
+            <div className="rounded-2xl border-2 border-cyan-500/60 bg-gradient-to-br from-[#0c2044] via-[#091530] to-[#081226] p-5 shadow-2xl space-y-3">
+              <div className="flex items-center justify-between border-b border-cyan-500/20 pb-2.5">
+                <span className="text-xs font-bold text-blue-700 flex items-center gap-1.5 uppercase tracking-wider">
+                  <Phone className="w-4 h-4 text-blue-600" />
+                  <span>MOBILE NUMBER (REQUIRED)</span>
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-700 border border-amber-500/40">
+                  MANDATORY
+                </span>
               </div>
 
-              {gpsCoords && (
-                <div className="flex items-center gap-2 pt-2 border-t border-slate-200/80 text-[11px] text-slate-500">
-                  <MapPin className="w-3.5 h-3.5 text-blue-600" />
-                  <span>
-                    GPS: {gpsCoords.latitude.toFixed(5)}° N, {gpsCoords.longitude.toFixed(5)}° E (±{gpsCoords.accuracy}m)
+              <p className="text-xs text-slate-200">
+                Enter your mobile number to receive your complaint tracking ID and status updates.
+              </p>
+
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-bold text-slate-300">
+                  MOBILE NUMBER
+                </label>
+                <div className="flex items-center rounded-xl bg-white border-2 border-cyan-500 focus-within:border-cyan-400 overflow-hidden shadow-inner">
+                  <span className="bg-slate-100 border-r border-slate-300 px-3 py-2.5 text-xs font-mono font-bold text-slate-800">
+                    +91
                   </span>
+                  <input
+                    type="tel"
+                    value={phoneNumberInput}
+                    onChange={(e) => {
+                      setPhoneNumberInput(e.target.value);
+                      if (phoneError) validatePhone(e.target.value);
+                    }}
+                    placeholder="9876543210"
+                    className="w-full px-3 py-2.5 text-sm font-mono font-bold text-slate-900 bg-transparent placeholder-slate-400 focus:outline-none"
+                    maxLength={13}
+                  />
                 </div>
-              )}
+                {phoneError ? (
+                  <p className="text-xs text-red-400 font-medium flex items-center gap-1 mt-1">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>{phoneError}</span>
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-slate-400">
+                    Example: <b>+91 9876543210</b>. 10-digit Indian mobile numbers starting with 6-9.
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* Privacy & Contact Settings (Requirement 19) */}
+            {/* Department Routing Card */}
+            <div className="rounded-xl border border-cyan-500/30 bg-[#071326] p-4 space-y-2 text-xs">
+              <div className="flex items-center justify-between border-b border-cyan-500/20 pb-2">
+                <span className="font-bold text-blue-700 flex items-center gap-1.5">
+                  <Building2 className="w-4 h-4 text-blue-600" />
+                  <span>Target Department Routing</span>
+                </span>
+                <span className="text-[10px] text-emerald-700 font-mono">AUTOMATICALLY RESOLVED</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Jurisdiction:</span>
+                <span className="text-slate-300 font-semibold">{routing.jurisdiction}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Department:</span>
+                <span className="text-blue-600 font-bold">{routing.department}</span>
+              </div>
+            </div>
+
+            {/* Privacy & Reporter Name */}
             <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
@@ -1152,42 +1113,29 @@ export function CitizenGrievanceFlow({
                 />
                 <div>
                   <span className="text-xs font-bold text-slate-900 block">
-                    {t.review.anonymousToggle}
+                    Submit as Anonymous Citizen
                   </span>
-                  <span className="text-[11px] text-slate-500 block">{t.review.anonymousDesc}</span>
+                  <span className="text-[11px] text-slate-500 block">
+                    Your mobile number will still receive SMS status updates securely.
+                  </span>
                 </div>
               </label>
 
               {!isAnonymous && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200">
-                  <div>
-                    <label className="block text-[11px] text-slate-500 mb-1">Your Name</label>
-                    <input
-                      type="text"
-                      value={reporterName}
-                      onChange={(e) => setReporterName(e.target.value)}
-                      placeholder="Citizen Name"
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-500 mb-1">
-                      {t.review.contactPhone}
-                    </label>
-                    <input
-                      type="tel"
-                      value={reporterContact}
-                      onChange={(e) => setReporterContact(e.target.value)}
-                      placeholder="+91 98765 43210"
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-[11px] text-slate-500 mb-1">Citizen Name (Optional)</label>
+                  <input
+                    type="text"
+                    value={reporterName}
+                    onChange={(e) => setReporterName(e.target.value)}
+                    placeholder="Enter your name"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                  />
                 </div>
               )}
             </div>
 
-
-            {/* Navigation Buttons */}
+            {/* Action Buttons */}
             <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
               <button
                 type="button"
@@ -1208,12 +1156,12 @@ export function CitizenGrievanceFlow({
                 {submitting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>{t.review.submitting}</span>
+                    <span>SUBMITTING GRIEVANCE...</span>
                   </>
                 ) : (
                   <>
                     <Send className="w-4 h-4" />
-                    <span>{t.review.submitBtn}</span>
+                    <span>SUBMIT GRIEVANCE</span>
                   </>
                 )}
               </button>
@@ -1221,7 +1169,7 @@ export function CitizenGrievanceFlow({
           </div>
         )}
 
-        {/* ================= STEP 6: COMPLAINT REGISTERED (SUCCESS) ================= */}
+        {/* ================= STEP 6: COMPLAINT REGISTERED (SUCCESS SCREEN - Section 14) ================= */}
         {currentStep === 6 && registeredComplaint && (
           <div className="space-y-6 text-center animate-in zoom-in-95 duration-200 py-4">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-700 border border-emerald-500/40 mx-auto shadow-lg shadow-emerald-500/20">
@@ -1229,20 +1177,20 @@ export function CitizenGrievanceFlow({
             </div>
 
             <div>
-              <h3 className="text-xl font-black text-slate-900 tracking-tight">
-                {t.success.title}
+              <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">
+                GRIEVANCE REGISTERED SUCCESSFULLY
               </h3>
               <p className="text-xs text-slate-500 mt-1">
-                Your grievance has been officially cataloged and forwarded to the local authority.
+                ✓ Complaint Registered & Auto-Routed to Responsible Department
               </p>
             </div>
 
-            {/* Unique Tracking ID Hero Box (Requirement 13) */}
-            <div className="rounded-2xl border-2 border-cyan-500/50 bg-[#071326] p-5 shadow-2xl space-y-3 max-w-md mx-auto">
+            {/* UNIQUE TRACKING ID HERO BOX (Section 6 & 14) */}
+            <div className="rounded-2xl border-2 border-cyan-500/60 bg-[#071326] p-5 shadow-2xl space-y-3 max-w-md mx-auto">
               <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-                {t.success.trackingIdLabel}
+                YOUR TRACKING ID
               </span>
-              <div className="text-2xl font-black font-mono text-blue-600 tracking-wider">
+              <div className="text-2xl sm:text-3xl font-black font-mono text-blue-600 tracking-wider">
                 {registeredComplaint.trackingId || registeredComplaint.complaintNumber}
               </div>
 
@@ -1259,86 +1207,146 @@ export function CitizenGrievanceFlow({
                   {copiedTrackingId ? (
                     <>
                       <Check className="w-3.5 h-3.5 text-emerald-700" />
-                      <span className="text-emerald-700">{t.success.copied}</span>
+                      <span className="text-emerald-700">Copied to Clipboard!</span>
                     </>
                   ) : (
                     <>
                       <Copy className="w-3.5 h-3.5" />
-                      <span>{t.success.copyBtn}</span>
+                      <span>COPY TRACKING ID</span>
                     </>
                   )}
                 </button>
               </div>
             </div>
 
-            {/* Registration Metadata Details */}
+            {/* GRIEVANCE METADATA SUMMARY (Section 14) */}
             <div className="grid grid-cols-2 gap-3 text-left max-w-md mx-auto text-xs bg-white p-4 rounded-xl border border-slate-200">
               <div>
-                <span className="text-[10px] text-slate-500 block">{t.success.statusLabel}</span>
-                <span className="font-bold text-amber-400">
-                  {registeredComplaint.status} / ROUTED
+                <span className="text-[10px] text-slate-500 uppercase font-semibold block">
+                  SMS SENT TO
+                </span>
+                <span className="font-mono font-bold text-slate-900 text-xs">
+                  {maskPhoneNumber(registeredComplaint.reporterContact || phoneNumberInput)}
                 </span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-500 block">{t.success.submittedAt}</span>
-                <span className="text-slate-600 font-mono">
-                  {new Date(registeredComplaint.createdAt).toLocaleDateString("en-IN", {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
+                <span className="text-[10px] text-slate-500 uppercase font-semibold block">
+                  Current Status
+                </span>
+                <span className="font-bold text-amber-400 font-mono">
+                  {registeredComplaint.status || "REPORTED"}
                 </span>
               </div>
               <div className="col-span-2 pt-2 border-t border-slate-200">
-                <span className="text-[10px] text-slate-500 block">{t.success.deptLabel}</span>
-                <span className="text-blue-700 font-semibold text-[11px] block">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold block">
+                  Department
+                </span>
+                <span className="text-blue-700 font-bold text-xs block truncate">
                   {registeredComplaint.routedDepartment || routing.department}
+                </span>
+              </div>
+              <div className="col-span-2 pt-2 border-t border-slate-200">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold block">
+                  Location
+                </span>
+                <span className="text-slate-300 font-semibold text-xs block truncate">
+                  {registeredComplaint.locationName || locationName}
                 </span>
               </div>
             </div>
 
-            {/* SMS Notification Banner */}
+            {/* SMS DELIVERY STATUS / FAILURE NOTICE (Section 12 & 14) */}
             {registeredComplaint.smsResult && (
-              <div className="max-w-md mx-auto p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between gap-2 text-left">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="font-bold">📱 SMS Confirmation Dispatched:</span>
-                </div>
-                <span className="font-mono text-[11px] text-emerald-900">
-                  {registeredComplaint.smsResult.recipient} ({registeredComplaint.smsResult.status})
-                </span>
+              <div className="max-w-md mx-auto space-y-2">
+                {registeredComplaint.smsResult.success ? (
+                  <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-xs text-emerald-200 flex items-center justify-between text-left">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>
+                        <b>SMS Delivery Status:</b> Sent to{" "}
+                        {maskPhoneNumber(registeredComplaint.reporterContact || phoneNumberInput)}
+                      </span>
+                    </div>
+                    <span className="font-mono text-[10px] text-emerald-700 border border-emerald-500/30 px-2 py-0.5 rounded">
+                      {registeredComplaint.smsResult.status}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="p-3.5 rounded-xl bg-amber-950/80 border border-amber-500/50 text-xs text-amber-200 space-y-2 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-400" />
+                        <span>SMS DELIVERY COULD NOT BE COMPLETED</span>
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-200/90">
+                      Your grievance registration is <b>100% SUCCESSFUL</b> and saved in the Aqua-Lens intelligence database. Please save your tracking ID: <b>{registeredComplaint.trackingId}</b>.
+                    </p>
+                    <div className="pt-1 flex items-center justify-between">
+                      <span className="text-[10px] text-amber-400/80">
+                        Target: {maskPhoneNumber(registeredComplaint.reporterContact || phoneNumberInput)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleResendSms}
+                        disabled={resendingSms}
+                        className="flex items-center gap-1 px-3 py-1 rounded bg-amber-500 hover:bg-amber-400 text-black font-bold text-[11px] shadow transition-colors disabled:opacity-50"
+                      >
+                        {resendingSms ? (
+                          <>
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            <span>Resending...</span>
+                          </>
+                        ) : (
+                          <>
+                            <MessageSquare className="w-3 h-3" />
+                            <span>RESEND SMS</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {resendSmsNotice && (
+                  <p className="text-xs text-cyan-300 font-mono font-semibold animate-pulse">
+                    {resendSmsNotice}
+                  </p>
+                )}
               </div>
             )}
 
-
-
-            {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            {/* ACTION BUTTONS (Section 14) */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-3 max-w-md mx-auto">
               <Link
                 href={`/complaints/track?id=${
                   registeredComplaint.trackingId || registeredComplaint.complaintNumber
                 }`}
                 className="flex items-center justify-center gap-2 w-full sm:w-auto rounded-xl bg-cyan-600 hover:bg-cyan-500 px-6 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-600/25 transition-all"
               >
-                <span>{t.success.trackBtn}</span>
+                <span>TRACK COMPLAINT</span>
                 <ExternalLink className="w-4 h-4" />
               </Link>
 
               <button
                 type="button"
-                onClick={() => {
-                  setRegisteredComplaint(null);
-                  setTitle("");
-                  setDescription("");
-                  setLivePhotoDataUrl(null);
-                  setCurrentStep(1);
-                }}
-                className="w-full sm:w-auto rounded-xl border border-slate-200 bg-slate-100/80 hover:bg-slate-700 px-5 py-2.5 text-xs font-semibold text-slate-600 transition-colors"
+                onClick={() =>
+                  copyToClipboard(
+                    registeredComplaint.trackingId || registeredComplaint.complaintNumber
+                  )
+                }
+                className="flex items-center justify-center gap-1.5 w-full sm:w-auto rounded-xl border border-cyan-500/40 bg-cyan-950/80 hover:bg-cyan-900 px-5 py-2.5 text-xs font-bold text-blue-700 transition-colors"
               >
-                {t.success.newComplaintBtn}
+                <Copy className="w-3.5 h-3.5" />
+                <span>COPY TRACKING ID</span>
               </button>
+
+              <Link
+                href="/complaints"
+                className="w-full sm:w-auto rounded-xl border border-slate-200 bg-slate-100/80 hover:bg-slate-700 px-5 py-2.5 text-xs font-semibold text-slate-600 transition-colors text-center"
+              >
+                BACK TO COMPLAINT CENTER
+              </Link>
             </div>
           </div>
         )}
