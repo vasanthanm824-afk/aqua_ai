@@ -227,19 +227,24 @@ export async function POST(request: Request) {
     const lng = typeof longitude === "number" ? longitude : parseFloat(longitude) || null;
     const locAcc = typeof locationAccuracy === "number" ? locationAccuracy : parseFloat(locationAccuracy) || null;
 
-    // Resolve Community: Use provided communityId or automatically match nearest community
-    let resolvedCommunityId = communityId || null;
+    // Resolve Community: Use provided communityId (by ID or code) or automatically match nearest community
+    let requestedCommunityId = communityId || null;
     let resolvedCommunity: any = null;
 
-    if (resolvedCommunityId) {
+    if (requestedCommunityId) {
       try {
-        resolvedCommunity = await prisma.community.findUnique({
-          where: { id: resolvedCommunityId },
+        resolvedCommunity = await prisma.community.findFirst({
+          where: {
+            OR: [
+              { id: requestedCommunityId },
+              { code: requestedCommunityId },
+            ],
+          },
         });
       } catch (e) {}
       if (!resolvedCommunity) {
         resolvedCommunity = BASELINE_SETTLEMENTS.find(
-          (c) => c.id === resolvedCommunityId || c.code === resolvedCommunityId
+          (c) => c.id === requestedCommunityId || c.code === requestedCommunityId
         );
       }
     } else if (lat !== null && lng !== null) {
@@ -249,6 +254,7 @@ export async function POST(request: Request) {
           select: {
             id: true,
             name: true,
+            code: true,
             state: true,
             district: true,
             block: true,
@@ -264,9 +270,35 @@ export async function POST(request: Request) {
       }
       const nearest = findNearestCommunity(lat, lng, allCommunities);
       if (nearest) {
-        resolvedCommunityId = nearest.community.id;
         resolvedCommunity = nearest.community;
       }
+    }
+
+    // Ensure valid DB foreign key IDs to prevent Foreign Key Constraint Violation errors
+    let validCommunityId: string | null = null;
+    if (resolvedCommunity && resolvedCommunity.id) {
+      try {
+        const commInDb = await prisma.community.findUnique({
+          where: { id: resolvedCommunity.id },
+          select: { id: true },
+        });
+        if (commInDb) {
+          validCommunityId = commInDb.id;
+        }
+      } catch (e) {}
+    }
+
+    let validReporterId: string | null = null;
+    if (session?.id) {
+      try {
+        const userInDb = await prisma.user.findUnique({
+          where: { id: session.id },
+          select: { id: true },
+        });
+        if (userInDb) {
+          validReporterId = userInDb.id;
+        }
+      } catch (e) {}
     }
 
     // Determine Administrative Jurisdiction & Responsible Department Routing
@@ -297,11 +329,11 @@ export async function POST(request: Request) {
       "127.0.0.1";
 
     let similarCount = 0;
-    if (resolvedCommunityId) {
+    if (validCommunityId) {
       try {
         similarCount = await prisma.complaint.count({
           where: {
-            communityId: resolvedCommunityId,
+            communityId: validCommunityId,
             category,
             status: { in: ["REPORTED", "UNDER_REVIEW", "ASSIGNED", "IN_PROGRESS"] },
           },
@@ -345,8 +377,8 @@ export async function POST(request: Request) {
         jurisdiction: routing.jurisdiction,
         routingStatus: routing.routingStatus,
         clientIp,
-        communityId: resolvedCommunityId,
-        reporterId: session ? session.id : null,
+        communityId: validCommunityId,
+        reporterId: validReporterId,
         reporterName: finalReporterName,
         reporterContact: finalReporterContact,
         isAnonymous: !!isAnonymous,
@@ -369,7 +401,7 @@ export async function POST(request: Request) {
             {
               oldStatus: "NONE",
               newStatus: "REPORTED",
-              changedById: session?.id || null,
+              changedById: validReporterId,
               changedByName: finalReporterName,
               notes: `Citizen registered grievance with contact ${phoneInfo.formatted}. Language: ${language.toUpperCase()}.`,
             },
