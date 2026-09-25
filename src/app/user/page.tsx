@@ -106,14 +106,25 @@ export default function UserPortalHomePage() {
               Welcome, <span className="font-semibold text-white">{user?.name || "Citizen"}</span>. Submit grievances, track active complaints in real-time, and query local WASH intelligence.
             </p>
           </div>
-          <button
-            onClick={() => setIsRegisterModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold transition-all shadow-lg hover:shadow-blue-500/25 shrink-0"
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>+ REGISTER GRIEVANCE</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {user?.role && (user.role.includes("ADMIN") || user.role === "ADMINISTRATOR" || user.role === "ANALYST" || user.role === "FIELD_OFFICER") && (
+              <Link
+                href="/"
+                className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all border border-slate-600"
+              >
+                <span>← Admin Portal</span>
+              </Link>
+            )}
+            <button
+              onClick={() => setIsRegisterModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold transition-all shadow-lg hover:shadow-blue-500/25 shrink-0"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>+ REGISTER GRIEVANCE</span>
+            </button>
+          </div>
         </div>
+
 
         {/* 2 Primary Feature Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
