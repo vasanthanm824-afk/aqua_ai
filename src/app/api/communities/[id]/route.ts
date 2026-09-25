@@ -3,41 +3,54 @@ import { prisma } from "@/lib/prisma";
 import { calculateVulnerability, DEFAULT_SCORING_WEIGHTS } from "@/lib/scoring";
 import { getSessionUser, hasPermission } from "@/lib/auth";
 
+import { BASELINE_SETTLEMENTS } from "@/lib/fallback-data";
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const community = await prisma.community.findUnique({
-      where: { id },
-      include: {
-        assessments: {
-          orderBy: { createdAt: "desc" },
-          take: 5,
-          include: {
-            contributions: true,
-          },
-        },
-        interventions: {
-          orderBy: { createdAt: "desc" },
-          include: {
-            assignedOfficer: {
-              select: { id: true, name: true, email: true },
+    let community: any = null;
+    try {
+      community = await prisma.community.findUnique({
+        where: { id },
+        include: {
+          assessments: {
+            orderBy: { createdAt: "desc" },
+            take: 5,
+            include: {
+              contributions: true,
             },
           },
+          interventions: {
+            orderBy: { createdAt: "desc" },
+            include: {
+              assignedOfficer: {
+                select: { id: true, name: true, email: true },
+              },
+            },
+          },
+          fieldVerifications: {
+            orderBy: { verificationDate: "desc" },
+          },
+          infrastructureAssets: true,
+          alerts: {
+            orderBy: { createdAt: "desc" },
+          },
         },
-        fieldVerifications: {
-          orderBy: { verificationDate: "desc" },
-        },
-        infrastructureAssets: true,
-        alerts: {
-          orderBy: { createdAt: "desc" },
-        },
-      },
-    });
+      });
+    } catch (dbErr) {
+      console.error("DB findUnique community error:", dbErr);
+    }
 
     if (!community) {
+      const fallback = BASELINE_SETTLEMENTS.find(
+        (c) => c.id === id || c.code === id || c.name.toLowerCase() === id.toLowerCase()
+      );
+      if (fallback) {
+        return NextResponse.json({ success: true, data: fallback });
+      }
       return NextResponse.json({ error: "Community not found" }, { status: 404 });
     }
 
