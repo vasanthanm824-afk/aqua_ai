@@ -134,6 +134,17 @@ export async function seedDatabase(customPrisma?: PrismaClient) {
       },
     });
 
+    await prisma.user.create({
+      data: {
+        email: "citizen@aqualens.gov.in",
+        passwordHash: passwordHashCitizen,
+        name: "Ramasamy (Citizen)",
+        role: "VIEWER",
+        organizationId: org.id,
+      },
+    });
+
+
 
     // 4. Standard 6-Factor Vulnerability Configuration for India
     const scoringConfig = await prisma.vulnerabilityConfiguration.create({
