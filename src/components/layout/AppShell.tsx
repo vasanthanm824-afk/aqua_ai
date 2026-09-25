@@ -117,8 +117,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 router.replace("/user");
               }
             }
+          } else {
+            if (pathname !== "/login") {
+              router.replace("/login");
+            }
+          }
+        } else {
+          if (pathname !== "/login") {
+            router.replace("/login");
           }
         }
+
       } catch (err) {
         console.error("Shell data fetch error:", err);
       }
