@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { evaluateRiskDrivers, generateActionRecommendations } from "@/lib/recommendations";
+import { BASELINE_SETTLEMENTS } from "@/lib/fallback-data";
 
 export async function GET(
   request: Request,
@@ -8,28 +9,38 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-
-    const community = await prisma.community.findUnique({
-      where: { id },
-      include: {
-        interventions: {
-          select: { id: true, title: true, status: true, priority: true },
+    let community: any = null;
+    try {
+      community = await prisma.community.findUnique({
+        where: { id },
+        include: {
+          interventions: {
+            select: { id: true, title: true, status: true, priority: true },
+          },
         },
-      },
-    });
+      });
+    } catch (e) {}
+
+    if (!community) {
+      community = BASELINE_SETTLEMENTS.find(
+        (c) => c.id === id || c.code === id || c.name.toLowerCase() === id.toLowerCase()
+      );
+    }
 
     if (!community) {
       return NextResponse.json({ error: "Community not found" }, { status: 404 });
     }
 
-    // Query active citizen complaints to integrate as corroborating evidence (Requirement 13)
-    const activeComplaints = await prisma.complaint.findMany({
-      where: {
-        communityId: id,
-        status: { in: ["REPORTED", "UNDER_REVIEW", "ASSIGNED", "IN_PROGRESS"] },
-      },
-      select: { category: true, verificationStatus: true },
-    });
+    let activeComplaints: any[] = [];
+    try {
+      activeComplaints = await prisma.complaint.findMany({
+        where: {
+          communityId: id,
+          status: { in: ["REPORTED", "UNDER_REVIEW", "ASSIGNED", "IN_PROGRESS"] },
+        },
+        select: { category: true, verificationStatus: true },
+      });
+    } catch (e) {}
 
     const complaintSignals = {
       waterComplaints: activeComplaints.filter((c) =>

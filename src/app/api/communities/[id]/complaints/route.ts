@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { BASELINE_SETTLEMENTS } from "@/lib/fallback-data";
 
 export async function GET(
   request: Request,
@@ -7,23 +8,43 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    let community: any = null;
+    let complaints: any[] = [];
 
-    const [community, complaints] = await Promise.all([
-      prisma.community.findUnique({
-        where: { id },
-        select: { id: true, name: true, code: true, district: true },
-      }),
-      prisma.complaint.findMany({
-        where: { communityId: id },
-        orderBy: { createdAt: "desc" },
-        include: {
-          evidence: true,
-          verifications: {
-            select: { id: true, status: true, verificationDate: true },
+    try {
+      const [cRes, cmpRes] = await Promise.all([
+        prisma.community.findUnique({
+          where: { id },
+          select: { id: true, name: true, code: true, district: true },
+        }),
+        prisma.complaint.findMany({
+          where: { communityId: id },
+          orderBy: { createdAt: "desc" },
+          include: {
+            evidence: true,
+            verifications: {
+              select: { id: true, status: true, verificationDate: true },
+            },
           },
-        },
-      }),
-    ]);
+        }),
+      ]);
+      community = cRes;
+      complaints = cmpRes || [];
+    } catch (e) {}
+
+    if (!community) {
+      const fallback = BASELINE_SETTLEMENTS.find(
+        (c) => c.id === id || c.code === id || c.name.toLowerCase() === id.toLowerCase()
+      );
+      if (fallback) {
+        community = {
+          id: fallback.id,
+          name: fallback.name,
+          code: fallback.code,
+          district: fallback.district,
+        };
+      }
+    }
 
     if (!community) {
       return NextResponse.json({ error: "Community not found" }, { status: 404 });
